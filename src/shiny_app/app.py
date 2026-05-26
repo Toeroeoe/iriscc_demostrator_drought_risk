@@ -1,80 +1,173 @@
 """_summary_
 
-    Returns:
-        _type_: _description_
+Returns:
+    _type_: _description_
 """
+
 from datetime import date, timedelta
+
 import seaborn as sns
-from shared import df, images, CLM5_smi_full, lon, lat, decade_to_index
+from shared import CLM5_smi_full, decade_to_index, df, images, lat, lon
 from shiny import App, render, ui
 from shiny.types import ImgData
 from shinyswatch import theme
-from theme_config import get_theme_config, GOOGLE_FONTS_URL
+from theme_config import GOOGLE_FONTS_URL, get_theme_config
 
 dark_theme = theme.darkly
 
 # The contents of the first 'page' is a navset with two 'panels'.
 page_droughts = ui.page_fluid(
-    ui.card("Space for introductory text about droughts and their impacts.",
-            height="250px",
-            style="text-align: left;"),
+    ui.card(
+        "Space for introductory text about droughts and their impacts.",
+        height="250px",
+        style="text-align: left;",
+    ),
+    ui.page_sidebar(
+        ui.sidebar(
+            "View settings",
+            ui.input_slider(
+                "dec",
+                "Decade",
+                min=date(1960, 1, 2),
+                max=date(2020, 1, 10),
+                value=date(1960, 1, 2),
+                step=timedelta(days=366 * 10),
+                time_format="%Y",
+                ticks=True,
+            ),
+            ui.input_select(
+                "model",
+                "Atmospheric forcing",
+                choices={
+                    "Ensemble mean": "ensemble_mean",
+                    "CESM2": "CESM2",
+                    "GFDL-ESM4": "GFDL-ESM4",
+                },
+            ),
+            ui.input_select(
+                "rcp",
+                "RCP scenario",
+                choices={
+                    "Historical": "historical",
+                    "RCP2.6": "rcp26",
+                    "RCP4.5": "rcp45",
+                    "RCP8.5": "rcp85",
+                },
+            ),
+            open="always",
+            width="300px",
+        ),  # Set sidebar width (default is 250px)
+        ui.navset_card_pill(
+            ui.nav_panel("Meteorological", ""),
+            ui.nav_panel("Hydrological", ui.output_image("image")),
+            ui.nav_panel(
+                "Agricultural", ui.output_plot("render_eu3_map", height="800px")
+            ),
+            title="Drought occurence",
+        ),
+        ui.navset_card_pill(
+            ui.nav_panel("Crop yield", ""),
+            ui.nav_panel("Forest carbon uptake"),
+            ui.nav_panel("Mortality"),
+            title="Impacts",
+        ),
+    ),
+)
 
-    ui.page_sidebar(ui.sidebar("View settings",
-                        ui.input_slider("dec", "Decade",
-                                        min=date(1960, 1, 2),
-                                        max=date(2020, 1, 10),
-                                        value=date(1960, 1, 2),
-                                        step=timedelta(days = 366*10),
-                                        time_format="%Y",
-                                        ticks=True),
-                        ui.input_select("model", "Atmospheric forcing",
-                                        choices={"Ensemble mean": "ensemble_mean",
-                                                 "CESM2": "CESM2",
-                                                 "GFDL-ESM4": "GFDL-ESM4",},),
-                        ui.input_select("rcp", "RCP scenario",
-                                        choices={"Historical": "historical",
-                                                 "RCP2.6": "rcp26",
-                                                 "RCP4.5": "rcp45",
-                                                 "RCP8.5": "rcp85",},),
-                    open="always",
-                    width="300px",
-                    ),  # Set sidebar width (default is 250px)
+# ── Static informational pages ──────────────────────────────────────────────
 
-    ui.navset_card_pill(
-        ui.nav_panel("Meteorological", ""),
-        ui.nav_panel("Hydrological", ui.output_image("image")),
-        ui.nav_panel("Agricultural", ui.output_plot("render_eu3_map", height="800px")),
-        title="Drought occurence"),
+page_authors = ui.page_fluid(
+    ui.h2("Authors & Acknowledgements"),
+    ui.hr(),
+    ui.h3("Authors"),
+    ui.p("[Author names and institutional affiliations]"),
+    ui.hr(),
+    ui.h3("Acknowledgements"),
+    ui.p(
+        "This demonstrator is part of the IRISCC project. "
+        "The project has received funding from [funding body, grant number / agreement number]. "
+        "The authors gratefully acknowledge the contribution of observational data provided by "
+        "the eLTER, ICOS, and [other RI] research infrastructures."
+    ),
+    style="text-align: left; padding: 20px;",
+)
 
-    ui.navset_card_pill(
-        ui.nav_panel("Crop yield", ""),
-        ui.nav_panel("Forest carbon uptake"),
-        ui.nav_panel("Mortality"),
-        title="Impacts")))
+page_license = ui.page_fluid(
+    ui.h2("License"),
+    ui.hr(),
+    ui.p(
+        '[Insert license name, e.g. "This software is released under the '
+        'MIT License" or "CC BY 4.0 International".]'
+    ),
+    ui.tags.pre(
+        "[Paste full license text here]",
+        style="white-space: pre-wrap; font-family: 'IBM Plex Mono', monospace; "
+        "font-size: 0.85em; padding: 16px;",
+    ),
+    style="text-align: left; padding: 20px;",
+)
+
+page_legal = ui.page_fluid(
+    ui.h2("Legal Notice, Data Protection & Accessibility"),
+    ui.hr(),
+    ui.h3("Legal Notice (Impressum)"),
+    ui.p(ui.tags.strong("Responsible organisation:")),
+    ui.p("[Institution name]"),
+    ui.p("[Street address, postcode, city, country]"),
+    ui.p(ui.tags.strong("Contact:"), " [contact e-mail or phone number]"),
+    ui.p(ui.tags.strong("Represented by:"), " [name / role]"),
+    ui.hr(),
+    ui.h3("Data Protection"),
+    ui.p(
+        "This demonstrator application does not collect, store, or process any personal data. "
+        "No cookies beyond those strictly necessary for the application's operation are set, "
+        "and no usage tracking or analytics are employed."
+    ),
+    ui.p(
+        "If you have questions regarding data protection, or wish to exercise rights under "
+        "the General Data Protection Regulation (GDPR), please contact: [data-protection contact or DPO e-mail]."
+    ),
+    ui.hr(),
+    ui.h3("Accessibility"),
+    ui.p(
+        "We aim to make this application accessible in accordance with the "
+        "Web Content Accessibility Guidelines (WCAG) 2.1, Level AA, and "
+        "Directive (EU) 2016/2102 on the accessibility of public-sector websites."
+    ),
+    ui.p(
+        "Known limitations: [describe any known gaps here]. "
+        "If you encounter accessibility barriers or need content in an alternative format, "
+        "please contact us at: [accessibility contact e-mail]."
+    ),
+    style="text-align: left; padding: 20px;",
+)
+
+# ── Model-evaluation page ─────────────────────────────────────────────────────
 
 page_model_evaluation = ui.page_fluid(
-                            ui.h2("Model evaluation with RI data."),
-                            "Here comparison of both model outputs" + 
-                            "with observations will be shown.",
-                            ui.layout_columns(
-                                ui.card(ui.output_image("elter_logo")),
-                                ui.card(ui.output_image("iriscc_logo")),
-                                ui.card(ui.output_image("icos_logo")),
-                                col_widths=(4, 4, 4),
-                                style="align-items: center;"),
-
-                            ui.h2("Hydrological model intercomparison"),
-                            ui.layout_columns(
-                                ui.card(ui.output_image("clm5_smi"), height="600px"),
-                                ui.card(ui.output_image("mhm_smi"), height="600px"),
-                                ui.card(ui.output_image("clm5_mhm_smi_corr"), height="600px"),
-                                col_widths=(4, 4, 4),
-                                style="align-items: center;"))
+    ui.h2("Model evaluation with RI data."),
+    "Here comparison of both model outputs" + "with observations will be shown.",
+    ui.layout_columns(
+        ui.card(ui.output_image("elter_logo")),
+        ui.card(ui.output_image("iriscc_logo")),
+        ui.card(ui.output_image("icos_logo")),
+        col_widths=(4, 4, 4),
+        style="align-items: center;",
+    ),
+    ui.h2("Hydrological model intercomparison"),
+    ui.layout_columns(
+        ui.card(ui.output_image("clm5_smi"), height="600px"),
+        ui.card(ui.output_image("mhm_smi"), height="600px"),
+        ui.card(ui.output_image("clm5_mhm_smi_corr"), height="600px"),
+        col_widths=(4, 4, 4),
+        style="align-items: center;",
+    ),
+)
 
 app_ui = ui.page_fluid(
-            ui.head_content(
-                ui.tags.link(rel="stylesheet", href=GOOGLE_FONTS_URL),
-                ui.tags.style("""
+    ui.head_content(
+        ui.tags.link(rel="stylesheet", href=GOOGLE_FONTS_URL),
+        ui.tags.style("""
                     /* Font Strategy - Consistent across Shiny & Matplotlib */
                     body {
                         font-family: Inter, system-ui, -apple-system, sans-serif;
@@ -90,55 +183,86 @@ app_ui = ui.page_fluid(
                     .shiny-input-label, .form-label {
                         font-family: Inter, system-ui, -apple-system, sans-serif;
                     }
-                    
+
                     /* Slider tick labels - monospace for numeric precision */
                     .irs-grid-text {
                         font-family: 'IBM Plex Mono', monospace !important;
                         font-size: 11px;
                     }
-                    
+
                     /* Navigation labels */
                     .nav-link, .nav-item {
                         font-family: Inter, system-ui, -apple-system, sans-serif;
                     }
-                    
+
                     /* Sidebar text */
                     .bslib-sidebar-layout .sidebar {
                         font-family: Inter, system-ui, -apple-system, sans-serif;
                     }
-                    
+
                     /* Card text */
                     .card-body {
                         font-family: Inter, system-ui, -apple-system, sans-serif;
                     }
-                """)
+                """),
+    ),
+    ui.layout_columns(
+        ui.h1(
+            "Risk on terrestrial ecosystems functioning to droughts and heatwaves",
+            style="text-align: center;",
+        ),
+        ui.output_image("iriscc_logo_title", inline=True),
+        col_widths=(10, 2),
+        style="align-items: center;",
+    ),
+    ui.navset_card_pill(
+        ui.nav_spacer(),
+        ui.nav_panel("Droughts and their impacts", page_droughts),
+        ui.nav_panel("Model evaluation", page_model_evaluation),
+        ui.nav_panel("Uncertainty", "a"),
+        ui.nav_menu(
+            "Further Information",
+            ui.nav_panel("About the data"),
+            ui.nav_panel("References", "a"),
+            "---",
+            ui.nav_panel("Authors & Acknowledgements", page_authors),
+            ui.nav_panel("LICENSE", page_license),
+            "---",
+            ui.nav_panel("Legal Notice", page_legal),
+        ),
+        id="main_navset",
+    ),
+    # ── Footer ────────────────────────────────────────────────────────
+    ui.tags.footer(
+        ui.tags.hr(style="margin-top: 30px; opacity: 0.25;"),
+        ui.tags.p(
+            ui.tags.a(
+                "Legal Notice | Data Protection | Accessibility",
+                href="#",
+                onclick=(
+                    "document.querySelector('[data-value=\"Legal Notice\"]')"
+                    ".click(); return false;"
+                ),
+                style="color: #888; text-decoration: none;",
             ),
-            
-            ui.layout_columns(
-                ui.h1("Risk on terrestrial ecosystems functioning to droughts and heatwaves",
-                      style="text-align: center;"),
-                ui.output_image("iriscc_logo_title", inline=True),
-                col_widths=(10, 2),
-                style="align-items: center;"),
-
-            ui.navset_card_pill(
-                ui.nav_spacer(),
-                ui.nav_panel("Droughts and their impacts", page_droughts),
-                ui.nav_panel("Model evaluation", page_model_evaluation),
-                ui.nav_panel("Uncertainty", "a"),
-                ui.nav_panel("References", "a"),
-                ui.nav_menu("Further Information",
-                            ui.nav_panel("About the data",))),
-
-            theme=dark_theme,
-
-            style="; ".join(["padding-top: 30px",
-                             "vertical-align: middle", 
-                             "text-align: center", 
-                             "padding-left: 30px", 
-                             "padding-right: 30px", 
-                             "padding-bottom: 30px"]))
-
+            style=(
+                "text-align: center; padding: 14px 0 24px 0; "
+                "font-size: 0.82em; color: #888;"
+            ),
+        ),
+    ),
+    theme=dark_theme,
+    style="; ".join(
+        [
+            "padding-top: 30px",
+            "vertical-align: middle",
+            "text-align: center",
+            "padding-left: 30px",
+            "padding-right: 30px",
+            "padding-bottom: 30px",
+        ]
+    ),
+)
 
 
 def server(input, output, session) -> None:
@@ -152,91 +276,94 @@ def server(input, output, session) -> None:
     Returns:
         None
     """
-    
+
     # Use dark theme with custom fonts
     theme_config = get_theme_config("dark")
 
     @render.plot
     def hist():
-        p = sns.histplot(df, x=input.var(), 
-                        facecolor=theme_config.colors['primary'], 
-                        edgecolor=theme_config.palette['text'])
+        p = sns.histplot(
+            df,
+            x=input.var(),
+            facecolor=theme_config.colors["primary"],
+            edgecolor=theme_config.palette["text"],
+        )
         return p.set(xlabel=None)
-    
+
     @render.plot
     def render_eu3_map():
         from plots import EU3_map
         from shared import mHM_smi_full
-        
+
         # Get selected decade from the "dec" slider input
         selected_date = input.dec()
         decade_year = selected_date.year
-        
+
         # Get the index for this decade from the mapping
         time_index = decade_to_index.get(decade_year)
-        
+
         if time_index is None:
             # Fallback to first available decade if not found
             decade_year = min(decade_to_index.keys())
             time_index = decade_to_index[decade_year]
-        
+
         # Extract the 2D arrays for this decade (already pre-loaded in memory)
         clm5_smi_data = CLM5_smi_full[time_index]
         mhm_smi_data = mHM_smi_full[time_index]
-        
+
         # Squeeze data if it has extra dimensions
         if len(clm5_smi_data.shape) > 2:
             clm5_smi_data = clm5_smi_data.squeeze()
         if len(mhm_smi_data.shape) > 2:
             mhm_smi_data = mhm_smi_data.squeeze()
-        
+
         vmin = 0.3
         vmax = 0.6
         cmap = "inferno_r"
-        
+
         # Create fresh map instance (required by Shiny's matplotlib backend)
         eu_map_instance = EU3_map(
-            suptitle=f"Soil moisture index (SMI) for decade {decade_year}-{decade_year+9}",
-            title=[f"CLM5", f"mHM"], 
+            suptitle=f"Soil moisture index (SMI) for decade {decade_year}-{decade_year + 9}",
+            title=[f"CLM5", f"mHM"],
             description="",
             color_mode="dark",
-            theme_config=theme_config
+            theme_config=theme_config,
         )
         fig, _, axs = eu_map_instance.create()
-        
+
         # Add data to both plots with same scale
         if lon is not None and lat is not None:
             # Plot CLM5 on left axis
             eu_map_instance.pcolormesh(
-                lon, 
-                lat, 
+                lon,
+                lat,
                 clm5_smi_data,
                 ax_num=0,
                 cmap=cmap,
                 vmin=vmin,
                 vmax=vmax,
-                alpha=0.8
+                alpha=0.8,
             )
-            
+
             # Plot mHM on right axis
             eu_map_instance.pcolormesh(
-                lon, 
-                lat, 
+                lon,
+                lat,
                 mhm_smi_data,
                 ax_num=1,
                 cmap=cmap,
                 vmin=vmin,
                 vmax=vmax,
-                alpha=0.8
+                alpha=0.8,
             )
-            
+
             # Add colorbar on the right of both plots
             eu_map_instance.colorbar(
                 eu_map_instance.pcolormesh_obj,
-                cbar_label='Soil Moisture Index',
-                extend='both',
+                cbar_label="Soil Moisture Index",
+                extend="both",
             )
-        
+
         return fig
 
     @render.data_frame
@@ -245,63 +372,80 @@ def server(input, output, session) -> None:
 
     @render.image
     def image():
-        img: ImgData = {"src": f"{images}/ScalerMatrix.png",
-                        "alt": "An example image",
-                        "height": "400px"}
+        img: ImgData = {
+            "src": f"{images}/ScalerMatrix.png",
+            "alt": "An example image",
+            "height": "400px",
+        }
         return img
 
     @render.image
     def iriscc_logo_title():
-        img: ImgData = {"src": f"{images}/iriscc-logo-full-horizontal-white.png",
-               "alt": "IRISCC logo",
-               "width": "130px"}
+        img: ImgData = {
+            "src": f"{images}/iriscc-logo-full-horizontal-white.png",
+            "alt": "IRISCC logo",
+            "width": "130px",
+        }
         return img
 
     @render.image
     def iriscc_logo():
-        img: ImgData = {"src": f"{images}/iriscc-logo-full-horizontal-fullcolor.png",
-               "alt": "IRISCC logo",
-               "width": "130px"}
+        img: ImgData = {
+            "src": f"{images}/iriscc-logo-full-horizontal-fullcolor.png",
+            "alt": "IRISCC logo",
+            "width": "130px",
+        }
         return img
 
     @render.image
     def elter_logo():
-        img: ImgData = {"src": f"{images}/eLTER_Logo.png",
-               "alt": "eLTER logo",
-               "style": "background-color: white;",
-               "width": "130px"}
+        img: ImgData = {
+            "src": f"{images}/eLTER_Logo.png",
+            "alt": "eLTER logo",
+            "style": "background-color: white;",
+            "width": "130px",
+        }
         return img
 
     @render.image
     def icos_logo():
-        img: ImgData = {"src": f"{images}/ICOS RI_logo_rgb.png",
-               "alt": "ICOS RI logo",
-               "style": "background-color: white;",
-               "width": "130px"}
+        img: ImgData = {
+            "src": f"{images}/ICOS RI_logo_rgb.png",
+            "alt": "ICOS RI logo",
+            "style": "background-color: white;",
+            "width": "130px",
+        }
         return img
 
     @render.image
     def clm5_smi():
-        img: ImgData = {"src": f"{images}/CLM5_SMI_2003_07.nc-1.png",
-               "alt": "CLM5 SMI",
-               "style": "background-color: white;",
-               "width": "500px"}
+        img: ImgData = {
+            "src": f"{images}/CLM5_SMI_2003_07.nc-1.png",
+            "alt": "CLM5 SMI",
+            "style": "background-color: white;",
+            "width": "500px",
+        }
         return img
 
     @render.image
     def mhm_smi():
-        img: ImgData = {"src": f"{images}/mHM_SMI_2003_07.nc-1.png",
-               "alt": "mHM SMI",
-               "style": "background-color: white;",
-               "width": "500px"}
+        img: ImgData = {
+            "src": f"{images}/mHM_SMI_2003_07.nc-1.png",
+            "alt": "mHM SMI",
+            "style": "background-color: white;",
+            "width": "500px",
+        }
         return img
 
     @render.image
     def clm5_mhm_smi_corr():
-        img: ImgData = {"src": f"{images}/smi_correlation_mhm_vs_clm5-1.png",
-               "alt": "CLM5 mHM SMI correlation",
-               "style": "background-color: white;",
-               "width": "500px"}
+        img: ImgData = {
+            "src": f"{images}/smi_correlation_mhm_vs_clm5-1.png",
+            "alt": "CLM5 mHM SMI correlation",
+            "style": "background-color: white;",
+            "width": "500px",
+        }
         return img
+
 
 app = App(app_ui, server)
