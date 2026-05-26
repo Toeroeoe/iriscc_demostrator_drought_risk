@@ -6,8 +6,20 @@ Returns:
 
 from datetime import date, timedelta
 
+import matplotlib.pyplot as plt
 import seaborn as sns
-from shared import CLM5_smi_full, decade_to_index, df, images, lat, lon
+from shared import (
+    CLM5_smi_full,
+    decade_to_index,
+    df,
+    discharge_time,
+    gauge_map_html,
+    gauge_meta,
+    get_gauge_discharge,
+    images,
+    lat,
+    lon,
+)
 from shiny import App, render, ui
 from shiny.types import ImgData
 from shinyswatch import theme
@@ -39,10 +51,12 @@ page_droughts = ui.page_fluid(
                 "model",
                 "Atmospheric forcing",
                 choices={
+                    "ERA5": "ERA5",
                     "Ensemble mean": "ensemble_mean",
                     "CESM2": "CESM2",
                     "GFDL-ESM4": "GFDL-ESM4",
                 },
+                selected="ERA5",
             ),
             ui.input_select(
                 "rcp",
@@ -59,7 +73,15 @@ page_droughts = ui.page_fluid(
         ),  # Set sidebar width (default is 250px)
         ui.navset_card_pill(
             ui.nav_panel("Meteorological", ""),
-            ui.nav_panel("Hydrological", ui.output_image("image")),
+            ui.nav_panel(
+                "Hydrological",
+                ui.p(
+                    "Click a gauge marker to view its discharge time series.",
+                    style="text-align:left; color:#888; margin-bottom:6px;",
+                ),
+                ui.HTML(gauge_map_html),
+                ui.output_plot("discharge_plot", height="320px"),
+            ),
             ui.nav_panel(
                 "Agricultural", ui.output_plot("render_eu3_map", height="800px")
             ),
@@ -167,6 +189,13 @@ page_model_evaluation = ui.page_fluid(
 app_ui = ui.page_fluid(
     ui.head_content(
         ui.tags.link(rel="stylesheet", href=GOOGLE_FONTS_URL),
+        # Leaflet – loaded in the head so the map script in the Hydrological
+        # tab can reference L.* as soon as it runs.
+        ui.tags.link(
+            rel="stylesheet",
+            href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
+        ),
+        ui.tags.script(src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"),
         ui.tags.style("""
                     /* Font Strategy - Consistent across Shiny & Matplotlib */
                     body {
@@ -218,8 +247,8 @@ app_ui = ui.page_fluid(
     ui.navset_card_pill(
         ui.nav_spacer(),
         ui.nav_panel("Droughts and their impacts", page_droughts),
-        ui.nav_panel("Model evaluation", page_model_evaluation),
         ui.nav_panel("Uncertainty", "a"),
+        ui.nav_panel("Model evaluation", page_model_evaluation),
         ui.nav_menu(
             "Further Information",
             ui.nav_panel("About the data"),
@@ -364,6 +393,86 @@ def server(input, output, session) -> None:
                 extend="both",
             )
 
+        return fig
+
+    @render.plot
+    def discharge_plot():
+        """Render observed + simulated discharge for the clicked gauge."""
+        # selected_gauge is injected by the Leaflet JS via Shiny.setInputValue;
+        # it doesn't exist until the user clicks, so guard against that.
+        try:
+            gauge_id = input.selected_gauge()
+        except Exception:
+            return None
+        if not gauge_id:
+            return None
+
+        qobs, qsim = get_gauge_discharge(gauge_id)
+        if qobs is None and qsim is None:
+            return None
+
+        # Gauge label from metadata
+        row = gauge_meta.loc[gauge_meta["gauge_id"] == gauge_id]
+        if not row.empty:
+            r = row.iloc[0]
+            title = f"{r['river']} at {r['station']} ({r['country']})"
+        else:
+            title = gauge_id
+
+        tc = get_theme_config("dark")
+        c = tc.colors
+
+        # Aggregate daily → monthly means for a readable comparison
+        import pandas as pd
+
+        qobs_mo = (
+            pd.Series(qobs, index=discharge_time).resample("ME").mean()
+            if qobs is not None
+            else None
+        )
+        qsim_mo = (
+            pd.Series(qsim, index=discharge_time).resample("ME").mean()
+            if qsim is not None
+            else None
+        )
+
+        fig, ax = plt.subplots(figsize=(12, 3.5))
+        fig.patch.set_facecolor(c["background"])
+        ax.set_facecolor(c["background"])
+
+        if qobs_mo is not None:
+            ax.plot(
+                qobs_mo.index,
+                qobs_mo.values,
+                color=c["primary"],
+                linewidth=0.9,
+                alpha=0.9,
+                label="Observed (Q\u2080\u2087\u2085)",
+            )
+        if qsim_mo is not None:
+            ax.plot(
+                qsim_mo.index,
+                qsim_mo.values,
+                color="#bb86fc",
+                linewidth=1.2,
+                alpha=0.9,
+                label="Simulated (Q\u209b\u1d35\u2098)",
+            )
+
+        ax.set_title(title, color=c["text"], fontsize=12, pad=8)
+        ax.set_ylabel("Discharge (m\u00b3 s\u207b\u00b9)", color=c["text"])
+        ax.set_xlabel("Date", color=c["text"])
+        ax.tick_params(colors=c["text"])
+        for spine in ax.spines.values():
+            spine.set_edgecolor(c["border"])
+        ax.legend(
+            facecolor=c["background"],
+            edgecolor=c["border"],
+            labelcolor=c["text"],
+            fontsize=10,
+        )
+        ax.grid(True, color=c["border"], alpha=0.3, linewidth=0.5)
+        fig.tight_layout()
         return fig
 
     @render.data_frame
