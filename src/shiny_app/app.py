@@ -10,6 +10,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from shared import (
     CLM5_smi_full,
+    SPI_full,
+    SPI_lat,
+    SPI_lon,
     decade_to_index,
     df,
     discharge_time,
@@ -19,6 +22,7 @@ from shared import (
     images,
     lat,
     lon,
+    spi_decade_to_index,
 )
 from shiny import App, render, ui
 from shiny.types import ImgData
@@ -72,7 +76,9 @@ page_droughts = ui.page_fluid(
             width="300px",
         ),  # Set sidebar width (default is 250px)
         ui.navset_card_pill(
-            ui.nav_panel("Meteorological", ""),
+            ui.nav_panel(
+                "Meteorological", ui.output_plot("render_spi_map", height="600px")
+            ),
             ui.nav_panel(
                 "Hydrological",
                 ui.p(
@@ -85,7 +91,7 @@ page_droughts = ui.page_fluid(
             ui.nav_panel(
                 "Agricultural", ui.output_plot("render_eu3_map", height="800px")
             ),
-            title="Drought occurence",
+            title="Drought indices",
         ),
         ui.navset_card_pill(
             ui.nav_panel("Crop yield", ""),
@@ -318,6 +324,48 @@ def server(input, output, session) -> None:
             edgecolor=theme_config.palette["text"],
         )
         return p.set(xlabel=None)
+
+    @render.plot
+    def render_spi_map():
+        from plots import EU1_map
+
+        selected_date = input.dec()
+        decade_year = selected_date.year
+        time_index = spi_decade_to_index.get(decade_year)
+
+        if time_index is None:
+            decade_year = min(spi_decade_to_index.keys())
+            time_index = spi_decade_to_index[decade_year]
+
+        spi_data = SPI_full[time_index]
+
+        spi_map = EU1_map(
+            suptitle=(
+                f"Standardized Precipitation Index (SPI) — "
+                f"{decade_year}–{decade_year + 9}"
+            ),
+            title=["ERA5"],
+            description="",
+            color_mode="dark",
+            theme_config=theme_config,
+        )
+        fig, _, _ = spi_map.create()
+
+        spi_map.pcolormesh(
+            SPI_lon,
+            SPI_lat,
+            spi_data,
+            cmap="RdBu",
+            vmin=-0.5,
+            vmax=0.5,
+            alpha=0.85,
+        )
+        spi_map.colorbar(
+            spi_map.pcolormesh_obj,
+            cbar_label="SPI (dimensionless)",
+            extend="both",
+        )
+        return fig
 
     @render.plot
     def render_eu3_map():
