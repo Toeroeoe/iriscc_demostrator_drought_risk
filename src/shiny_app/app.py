@@ -6,6 +6,7 @@ Returns:
 
 from datetime import date, timedelta
 
+<<<<<<< HEAD
 import matplotlib.pyplot as plt
 import seaborn as sns
 from shared import (
@@ -24,6 +25,10 @@ from shared import (
     lon,
     spi_decade_to_index,
 )
+=======
+import seaborn as sns
+from shared import CLM5_smi_full, decade_to_index, df, images, lat, lon
+>>>>>>> 1690582 (sonar qube)
 from shiny import App, render, ui
 from shiny.types import ImgData
 from shinyswatch import theme
@@ -55,12 +60,18 @@ page_droughts = ui.page_fluid(
                 "model",
                 "Atmospheric forcing",
                 choices={
+<<<<<<< HEAD
                     "ERA5": "ERA5",
+=======
+>>>>>>> 1690582 (sonar qube)
                     "Ensemble mean": "ensemble_mean",
                     "CESM2": "CESM2",
                     "GFDL-ESM4": "GFDL-ESM4",
                 },
+<<<<<<< HEAD
                 selected="ERA5",
+=======
+>>>>>>> 1690582 (sonar qube)
             ),
             ui.input_select(
                 "rcp",
@@ -76,6 +87,7 @@ page_droughts = ui.page_fluid(
             width="300px",
         ),  # Set sidebar width (default is 250px)
         ui.navset_card_pill(
+<<<<<<< HEAD
             ui.nav_panel(
                 "Meteorological", ui.output_plot("render_spi_map", height="600px")
             ),
@@ -92,6 +104,14 @@ page_droughts = ui.page_fluid(
                 "Agricultural", ui.output_plot("render_eu3_map", height="800px")
             ),
             title="Drought indices",
+=======
+            ui.nav_panel("Meteorological", ""),
+            ui.nav_panel("Hydrological", ui.output_image("image")),
+            ui.nav_panel(
+                "Agricultural", ui.output_plot("render_eu3_map", height="800px")
+            ),
+            title="Drought occurence",
+>>>>>>> 1690582 (sonar qube)
         ),
         ui.navset_card_pill(
             ui.nav_panel("Crop yield", ""),
@@ -195,6 +215,7 @@ page_model_evaluation = ui.page_fluid(
 app_ui = ui.page_fluid(
     ui.head_content(
         ui.tags.link(rel="stylesheet", href=GOOGLE_FONTS_URL),
+<<<<<<< HEAD
         # Leaflet – loaded in the head so the map script in the Hydrological
         # tab can reference L.* as soon as it runs.
         ui.tags.link(
@@ -209,6 +230,8 @@ app_ui = ui.page_fluid(
         ui.tags.script(
             src="https://cdn.jsdelivr.net/npm/proj4leaflet@1.0.2/src/proj4leaflet.js"
         ),
+=======
+>>>>>>> 1690582 (sonar qube)
         ui.tags.style("""
                     /* Font Strategy - Consistent across Shiny & Matplotlib */
                     body {
@@ -260,8 +283,13 @@ app_ui = ui.page_fluid(
     ui.navset_card_pill(
         ui.nav_spacer(),
         ui.nav_panel("Droughts and their impacts", page_droughts),
+<<<<<<< HEAD
         ui.nav_panel("Uncertainty", "a"),
         ui.nav_panel("Model evaluation", page_model_evaluation),
+=======
+        ui.nav_panel("Model evaluation", page_model_evaluation),
+        ui.nav_panel("Uncertainty", "a"),
+>>>>>>> 1690582 (sonar qube)
         ui.nav_menu(
             "Further Information",
             ui.nav_panel("About the data"),
@@ -332,6 +360,7 @@ def server(input, output, session) -> None:
         )
         return p.set(xlabel=None)
 
+<<<<<<< HEAD
     @render.plot
     def render_spi_map():
         from plots import EU1_map
@@ -403,6 +432,8 @@ def server(input, output, session) -> None:
         )
         return fig
 
+=======
+>>>>>>> 1690582 (sonar qube)
     @render.plot
     def render_eu3_map():
         from plots import EU3_map
@@ -437,7 +468,11 @@ def server(input, output, session) -> None:
         # Create fresh map instance (required by Shiny's matplotlib backend)
         eu_map_instance = EU3_map(
             suptitle=f"Soil moisture index (SMI) for decade {decade_year}-{decade_year + 9}",
+<<<<<<< HEAD
             title=["CLM5", "mHM"],
+=======
+            title=[f"CLM5", f"mHM"],
+>>>>>>> 1690582 (sonar qube)
             description="",
             color_mode="dark",
             theme_config=theme_config,
@@ -477,6 +512,7 @@ def server(input, output, session) -> None:
                 extend="both",
             )
 
+<<<<<<< HEAD
         return fig
 
     @render.plot
@@ -557,6 +593,8 @@ def server(input, output, session) -> None:
         )
         ax.grid(True, color=c["border"], alpha=0.3, linewidth=0.5)
         fig.tight_layout()
+=======
+>>>>>>> 1690582 (sonar qube)
         return fig
 
     @render.data_frame
