@@ -231,3 +231,33 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
 
 # Built once at import time – reused for the lifetime of the Shiny process
 gauge_map_html = _build_gauge_map_html(gauge_meta)
+
+# ── SPI (Standardized Precipitation Index) decadal data ───────────────────────────
+
+_spi_files = sorted(glob.glob(str(data_dir / "decadal_SXI_P/SXI_P_*_timmean.nc")))
+
+if len(_spi_files) == 0:
+    raise FileNotFoundError("No SXI_P timmean files found in data/decadal_SXI_P/.")
+
+# Decade start years extracted from filenames (e.g. SXI_P_92D_1960_1969_timmean.nc)
+_spi_decade_years = []
+for _f in _spi_files:
+    _m = re.search(r"(\d{4})_(\d{4})", _f)
+    if _m:
+        _spi_decade_years.append(int(_m.group(1)))
+
+# 2-D lat/lon (curvilinear) – identical across all files, load once
+with nc.Dataset(_spi_files[0]) as _ds:
+    SPI_lat = np.ma.filled(_ds.variables["lat"][:].astype(float), np.nan)
+    SPI_lon = np.ma.filled(_ds.variables["lon"][:].astype(float), np.nan)
+
+# Stack all decades: shape (n_decades, lat, lon)
+_spi_arrays = []
+for _f in _spi_files:
+    with nc.Dataset(_f) as _ds:
+        _spi_arrays.append(
+            np.ma.filled(_ds.variables["SXI_P"][0].astype(float), np.nan)
+        )
+SPI_full = np.array(_spi_arrays)  # (n_decades, 1544, 1592)
+
+spi_decade_to_index = {year: idx for idx, year in enumerate(_spi_decade_years)}
