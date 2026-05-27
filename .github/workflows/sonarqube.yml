@@ -1,4 +1,5 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 name: SonarCloud analysis
 
 on:
@@ -38,23 +39,31 @@ permissions:
 # or reach out to our community forum if you need some help (https://community.sonarsource.com/c/sq/10)
 
 name: SonarQube analysis
+=======
+name: SonarCloud analysis
+>>>>>>> 1690582 (sonar qube)
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
+<<<<<<< HEAD
   pull-requests: read # allows SonarQube to decorate PRs with analysis results
 >>>>>>> 5d712ab (Add SonarQube analysis workflow)
+=======
+  pull-requests: read # allows SonarCloud to decorate PRs with analysis results
+>>>>>>> 1690582 (sonar qube)
 
 jobs:
   Analysis:
     runs-on: ubuntu-latest
 
     steps:
+<<<<<<< HEAD
 <<<<<<< HEAD
       - name: Check out repository
         uses: actions/checkout@v4
@@ -108,3 +117,17 @@ jobs:
             # Adds more detail to both client and server-side analysis logs, activating DEBUG mode for the scanner, and adding client-side environment variables and system properties to the server-side log of analysis report processing.
             #-Dsonar.verbose= # optional, default is false
 >>>>>>> 5d712ab (Add SonarQube analysis workflow)
+=======
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          # Fetch full history so SonarCloud can compute blame and new-code metrics
+          fetch-depth: 0
+
+      - name: Analyze with SonarCloud
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+>>>>>>> 1690582 (sonar qube)
