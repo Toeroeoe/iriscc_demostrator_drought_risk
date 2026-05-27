@@ -202,6 +202,13 @@ app_ui = ui.page_fluid(
             href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
         ),
         ui.tags.script(src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"),
+        # Proj4.js + Proj4Leaflet — needed for non-Mercator CRS in Leaflet
+        ui.tags.script(
+            src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.15.0/proj4.js"
+        ),
+        ui.tags.script(
+            src="https://cdn.jsdelivr.net/npm/proj4leaflet@1.0.2/src/proj4leaflet.js"
+        ),
         ui.tags.style("""
                     /* Font Strategy - Consistent across Shiny & Matplotlib */
                     body {
@@ -331,8 +338,36 @@ def server(input, output, session) -> None:
 
         selected_date = input.dec()
         decade_year = selected_date.year
-        time_index = spi_decade_to_index.get(decade_year)
+        model = input.model()
 
+        _model_labels = {
+            "ERA5": "ERA5",
+            "ensemble_mean": "Ensemble mean",
+            "CESM2": "CESM2",
+            "GFDL-ESM4": "GFDL-ESM4",
+        }
+        model_label = _model_labels.get(model, model)
+
+        # Only ERA5 forcing data is currently available for SPI
+        if model != "ERA5":
+            c = theme_config.colors
+            fig, ax = plt.subplots(figsize=(4, 1.5))
+            fig.patch.set_facecolor(c["background"])
+            ax.set_facecolor(c["background"])
+            ax.text(
+                0.5,
+                0.5,
+                f'SPI data for "{model_label}" is not yet available.',
+                ha="center",
+                va="center",
+                color=c["text"],
+                fontsize=11,
+                transform=ax.transAxes,
+            )
+            ax.axis("off")
+            return fig
+
+        time_index = spi_decade_to_index.get(decade_year)
         if time_index is None:
             decade_year = min(spi_decade_to_index.keys())
             time_index = spi_decade_to_index[decade_year]
@@ -341,13 +376,14 @@ def server(input, output, session) -> None:
 
         spi_map = EU1_map(
             suptitle=(
-                f"Standardized Precipitation Index (SPI) — "
-                f"{decade_year}–{decade_year + 9}"
+                f"Standardized Precipitation Index (SPI)\n"
+                f"{model_label}, {decade_year}–{decade_year + 9}"
             ),
-            title=["ERA5"],
+            title=[],  # single title only — avoids overlap with suptitle
             description="",
             color_mode="dark",
             theme_config=theme_config,
+            cbar_width_ratio=0.04,
         )
         fig, _, _ = spi_map.create()
 
@@ -401,7 +437,7 @@ def server(input, output, session) -> None:
         # Create fresh map instance (required by Shiny's matplotlib backend)
         eu_map_instance = EU3_map(
             suptitle=f"Soil moisture index (SMI) for decade {decade_year}-{decade_year + 9}",
-            title=[f"CLM5", f"mHM"],
+            title=["CLM5", "mHM"],
             description="",
             color_mode="dark",
             theme_config=theme_config,
@@ -495,7 +531,7 @@ def server(input, output, session) -> None:
                 color=c["primary"],
                 linewidth=0.9,
                 alpha=0.9,
-                label="Observed (Q\u2080\u2087\u2085)",
+                label="Observed",
             )
         if qsim_mo is not None:
             ax.plot(
@@ -504,7 +540,7 @@ def server(input, output, session) -> None:
                 color="#bb86fc",
                 linewidth=1.2,
                 alpha=0.9,
-                label="Simulated (Q\u209b\u1d35\u2098)",
+                label="Simulated",
             )
 
         ax.set_title(title, color=c["text"], fontsize=12, pad=8)

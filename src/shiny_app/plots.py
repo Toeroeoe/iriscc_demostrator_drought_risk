@@ -8,7 +8,28 @@ import matplotlib.pyplot as plt
 import numpy as np
 from cartopy.mpl import geoaxes
 from matplotlib.gridspec import GridSpec
+from matplotlib.layout_engine import LayoutEngine
 from theme_config import ThemeConfig
+
+
+class _NoOpLayoutEngine(LayoutEngine):
+    """A no-op layout engine that satisfies Shiny's compatibility check.
+
+    Shiny inspects ``fig.get_layout_engine()``:
+    - If falsy  → installs TightLayoutEngine (bad for GeoAxes).
+    - If truthy and ``adjust_compatible=False`` → also installs TightLayoutEngine.
+    - If truthy and ``adjust_compatible=True``  → leaves the engine alone (good).
+
+    We need an engine that is truthy, has ``adjust_compatible=True``, and
+    whose ``execute()`` is a no-op so it never calls tight_layout.
+    """
+
+    _adjust_compatible = True
+    _colorbar_gridspec = True
+
+    def execute(self, fig) -> None:  # type: ignore[override]
+        pass  # deliberately do nothing
+
 
 # FONT STRATEGY - Consistent with Shiny App:
 # 1. BODY: Inter → axis labels, legend, tick labels
@@ -42,6 +63,10 @@ class demo_fig:
         self.palette = self.theme_config.get_plot_palette()
 
         self.fig = plt.figure(figsize=(self.fx, self.fy), dpi=self.dpi)
+        # Install a no-op layout engine so Shiny sees a truthy, adjust_compatible
+        # engine and leaves it alone instead of replacing it with tight layout.
+        self.fig.set_layout_engine(_NoOpLayoutEngine())
+        self.fig.tight_layout = lambda *a, **kw: None  # belt-and-braces
 
         # Create GridSpec with 3 columns: plot1, plot2, colorbar
         self.gs = GridSpec(
@@ -77,8 +102,8 @@ class demo_fig:
             color=self.palette["text"],
         )
 
-        # Disable automatic tight_layout
-        # self.fig.set_tight_layout(False)
+        # Prevent Shiny's fig.tight_layout() from corrupting GeoAxes layout
+        self.fig.tight_layout = lambda *a, **kw: None
 
     def create_axes(self):
 
@@ -143,6 +168,7 @@ class EU1_map(demo_fig):
     grid_color: str = "grey"
     grid_linestyle: str = "--"
     fs_map_label: int = 4
+    cbar_width_ratio: float = 0.05
     pcolormesh_obj: Optional[object] = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
@@ -150,17 +176,29 @@ class EU1_map(demo_fig):
         self.theme_config.apply_to_matplotlib()
         self.palette = self.theme_config.get_plot_palette()
 
+        # Prevent matplotlib / Shiny from calling tight_layout on this figure.
+        # GeoAxes are incompatible with tight_layout and it corrupts the
+        # manually specified GridSpec margins.
+        mpl.rcParams["figure.autolayout"] = False
+
         self.fig = plt.figure(figsize=(self.fx, self.fy), dpi=self.dpi)
+
+        # Belt-and-braces: replace tight_layout on the figure object so that
+        # Shiny's internal fig.tight_layout() call becomes a no-op.
+        # Install the same no-op layout engine so Shiny leaves it alone.
+        self.fig.set_layout_engine(_NoOpLayoutEngine())
+        self.fig.tight_layout = lambda *a, **kw: None
+
         self.gs = GridSpec(
             figure=self.fig,
             nrows=1,
             ncols=2,
-            width_ratios=[1, 0.08],
-            wspace=0.08,
+            width_ratios=[1, self.cbar_width_ratio],
+            wspace=0.03,  # tighter gap between map and colorbar
             left=0.02,
             right=0.88,
-            top=0.92,
-            bottom=0.04,
+            top=0.76,  # room above axes for two-line suptitle + breathing space
+            bottom=0.10,  # room below axes for latitude tick labels
         )
         self.fig.patch.set_alpha(0.0)
         mpl.rcParams["text.color"] = self.palette["text"]
@@ -168,7 +206,7 @@ class EU1_map(demo_fig):
             self.suptitle,
             fontsize=self.fs_title + 2,
             x=0.44,
-            y=0.98,
+            y=0.96,  # comfortably above the axes top (0.87)
             fontfamily=self.theme_config.get_font_family("heading"),
             color=self.palette["text"],
         )
@@ -200,22 +238,22 @@ class EU1_map(demo_fig):
         )
         self.ax.tick_params(colors=self.theme_config.colors["text"])
 
-        self.ax.add_feature(
+        self.ax.add_feature(  # type: ignore[union-attr]
             cfeature.OCEAN, color=self.ocean_color, alpha=self.alpha_ocean, zorder=0
         )
-        self.ax.add_feature(
+        self.ax.add_feature(  # type: ignore[union-attr]
             cfeature.LAND, color=self.land_color, alpha=self.alpha_land, zorder=0
         )
-        self.ax.coastlines(linewidth=self.coastline_lw, zorder=2)
+        self.ax.coastlines(linewidth=self.coastline_lw, zorder=2)  # type: ignore[union-attr]
 
-        proj_lon_extents, proj_lat_extents, _ = self.ax.projection.transform_points(
+        proj_lon_extents, proj_lat_extents, _ = self.ax.projection.transform_points(  # type: ignore[union-attr]
             self.plot_projection,
             np.array(self.lon_extents),
             np.array(self.lat_extents),
         ).T
-        self.ax.set_extent([*proj_lon_extents, *proj_lat_extents])
+        self.ax.set_extent([*proj_lon_extents, *proj_lat_extents])  # type: ignore[union-attr]
 
-        gl = self.ax.gridlines(
+        gl = self.ax.gridlines(  # type: ignore[union-attr]
             crs=self.plot_projection,
             linewidth=self.grid_lw,
             color=self.grid_color,
