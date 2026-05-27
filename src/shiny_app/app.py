@@ -7,7 +7,18 @@ Returns:
 from datetime import date, timedelta
 
 import seaborn as sns
-from shared import CLM5_smi_full, decade_to_index, df, images, lat, lon
+from shared import (
+    CLM5_smi_full,
+    decade_to_index,
+    df,
+    discharge_time,
+    gauge_map_html,
+    gauge_meta,
+    get_gauge_discharge,
+    images,
+    lat,
+    lon,
+)
 from shiny import App, render, ui
 from shiny.types import ImgData
 from shinyswatch import theme
@@ -177,6 +188,13 @@ page_model_evaluation = ui.page_fluid(
 app_ui = ui.page_fluid(
     ui.head_content(
         ui.tags.link(rel="stylesheet", href=GOOGLE_FONTS_URL),
+        # Leaflet – loaded in the head so the map script in the Hydrological
+        # tab can reference L.* as soon as it runs.
+        ui.tags.link(
+            rel="stylesheet",
+            href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
+        ),
+        ui.tags.script(src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"),
         ui.tags.style("""
                     /* Font Strategy - Consistent across Shiny & Matplotlib */
                     body {
