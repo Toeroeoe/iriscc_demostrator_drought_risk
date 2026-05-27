@@ -6,46 +6,8 @@ Returns:
 
 from datetime import date, timedelta
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-import matplotlib.pyplot as plt
-import seaborn as sns
-from shared import (
-    CLM5_smi_full,
-    SPI_full,
-    SPI_lat,
-    SPI_lon,
-    decade_to_index,
-    df,
-    discharge_time,
-    gauge_map_html,
-    gauge_meta,
-    get_gauge_discharge,
-    images,
-    lat,
-    lon,
-    spi_decade_to_index,
-)
-=======
 import seaborn as sns
 from shared import CLM5_smi_full, decade_to_index, df, images, lat, lon
->>>>>>> 1690582 (sonar qube)
-=======
-import matplotlib.pyplot as plt
-import seaborn as sns
-from shared import (
-    CLM5_smi_full,
-    decade_to_index,
-    df,
-    discharge_time,
-    gauge_map_html,
-    gauge_meta,
-    get_gauge_discharge,
-    images,
-    lat,
-    lon,
-)
->>>>>>> 4d49927 (discharge data.. and leaflet map. discharge.nc is kept out for now)
 from shiny import App, render, ui
 from shiny.types import ImgData
 from shinyswatch import theme
@@ -77,26 +39,12 @@ page_droughts = ui.page_fluid(
                 "model",
                 "Atmospheric forcing",
                 choices={
-<<<<<<< HEAD
-<<<<<<< HEAD
                     "ERA5": "ERA5",
-=======
->>>>>>> 1690582 (sonar qube)
-=======
-                    "ERA5": "ERA5",
->>>>>>> 4d49927 (discharge data.. and leaflet map. discharge.nc is kept out for now)
                     "Ensemble mean": "ensemble_mean",
                     "CESM2": "CESM2",
                     "GFDL-ESM4": "GFDL-ESM4",
                 },
-<<<<<<< HEAD
-<<<<<<< HEAD
                 selected="ERA5",
-=======
->>>>>>> 1690582 (sonar qube)
-=======
-                selected="ERA5",
->>>>>>> 4d49927 (discharge data.. and leaflet map. discharge.nc is kept out for now)
             ),
             ui.input_select(
                 "rcp",
@@ -112,24 +60,6 @@ page_droughts = ui.page_fluid(
             width="300px",
         ),  # Set sidebar width (default is 250px)
         ui.navset_card_pill(
-<<<<<<< HEAD
-            ui.nav_panel(
-                "Meteorological", ui.output_plot("render_spi_map", height="600px")
-            ),
-            ui.nav_panel(
-                "Hydrological",
-                ui.p(
-                    "Click a gauge marker to view its discharge time series.",
-                    style="text-align:left; color:#888; margin-bottom:6px;",
-                ),
-                ui.HTML(gauge_map_html),
-                ui.output_plot("discharge_plot", height="320px"),
-            ),
-            ui.nav_panel(
-                "Agricultural", ui.output_plot("render_eu3_map", height="800px")
-            ),
-            title="Drought indices",
-=======
             ui.nav_panel("Meteorological", ""),
             ui.nav_panel(
                 "Hydrological",
@@ -144,7 +74,6 @@ page_droughts = ui.page_fluid(
                 "Agricultural", ui.output_plot("render_eu3_map", height="800px")
             ),
             title="Drought occurence",
->>>>>>> 1690582 (sonar qube)
         ),
         ui.navset_card_pill(
             ui.nav_panel("Crop yield", ""),
@@ -248,29 +177,6 @@ page_model_evaluation = ui.page_fluid(
 app_ui = ui.page_fluid(
     ui.head_content(
         ui.tags.link(rel="stylesheet", href=GOOGLE_FONTS_URL),
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 4d49927 (discharge data.. and leaflet map. discharge.nc is kept out for now)
-        # Leaflet – loaded in the head so the map script in the Hydrological
-        # tab can reference L.* as soon as it runs.
-        ui.tags.link(
-            rel="stylesheet",
-            href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
-        ),
-        ui.tags.script(src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"),
-<<<<<<< HEAD
-        # Proj4.js + Proj4Leaflet — needed for non-Mercator CRS in Leaflet
-        ui.tags.script(
-            src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.15.0/proj4.js"
-        ),
-        ui.tags.script(
-            src="https://cdn.jsdelivr.net/npm/proj4leaflet@1.0.2/src/proj4leaflet.js"
-        ),
-=======
->>>>>>> 1690582 (sonar qube)
-=======
->>>>>>> 4d49927 (discharge data.. and leaflet map. discharge.nc is kept out for now)
         ui.tags.style("""
                     /* Font Strategy - Consistent across Shiny & Matplotlib */
                     body {
@@ -322,18 +228,8 @@ app_ui = ui.page_fluid(
     ui.navset_card_pill(
         ui.nav_spacer(),
         ui.nav_panel("Droughts and their impacts", page_droughts),
-<<<<<<< HEAD
-<<<<<<< HEAD
         ui.nav_panel("Uncertainty", "a"),
         ui.nav_panel("Model evaluation", page_model_evaluation),
-=======
-        ui.nav_panel("Model evaluation", page_model_evaluation),
-        ui.nav_panel("Uncertainty", "a"),
->>>>>>> 1690582 (sonar qube)
-=======
-        ui.nav_panel("Uncertainty", "a"),
-        ui.nav_panel("Model evaluation", page_model_evaluation),
->>>>>>> 4d49927 (discharge data.. and leaflet map. discharge.nc is kept out for now)
         ui.nav_menu(
             "Further Information",
             ui.nav_panel("About the data"),
@@ -404,80 +300,6 @@ def server(input, output, session) -> None:
         )
         return p.set(xlabel=None)
 
-<<<<<<< HEAD
-    @render.plot
-    def render_spi_map():
-        from plots import EU1_map
-
-        selected_date = input.dec()
-        decade_year = selected_date.year
-        model = input.model()
-
-        _model_labels = {
-            "ERA5": "ERA5",
-            "ensemble_mean": "Ensemble mean",
-            "CESM2": "CESM2",
-            "GFDL-ESM4": "GFDL-ESM4",
-        }
-        model_label = _model_labels.get(model, model)
-
-        # Only ERA5 forcing data is currently available for SPI
-        if model != "ERA5":
-            c = theme_config.colors
-            fig, ax = plt.subplots(figsize=(4, 1.5))
-            fig.patch.set_facecolor(c["background"])
-            ax.set_facecolor(c["background"])
-            ax.text(
-                0.5,
-                0.5,
-                f'SPI data for "{model_label}" is not yet available.',
-                ha="center",
-                va="center",
-                color=c["text"],
-                fontsize=11,
-                transform=ax.transAxes,
-            )
-            ax.axis("off")
-            return fig
-
-        time_index = spi_decade_to_index.get(decade_year)
-        if time_index is None:
-            decade_year = min(spi_decade_to_index.keys())
-            time_index = spi_decade_to_index[decade_year]
-
-        spi_data = SPI_full[time_index]
-
-        spi_map = EU1_map(
-            suptitle=(
-                f"Standardized Precipitation Index (SPI)\n"
-                f"{model_label}, {decade_year}–{decade_year + 9}"
-            ),
-            title=[],  # single title only — avoids overlap with suptitle
-            description="",
-            color_mode="dark",
-            theme_config=theme_config,
-            cbar_width_ratio=0.04,
-        )
-        fig, _, _ = spi_map.create()
-
-        spi_map.pcolormesh(
-            SPI_lon,
-            SPI_lat,
-            spi_data,
-            cmap="RdBu",
-            vmin=-0.5,
-            vmax=0.5,
-            alpha=0.85,
-        )
-        spi_map.colorbar(
-            spi_map.pcolormesh_obj,
-            cbar_label="SPI (dimensionless)",
-            extend="both",
-        )
-        return fig
-
-=======
->>>>>>> 1690582 (sonar qube)
     @render.plot
     def render_eu3_map():
         from plots import EU3_map
@@ -512,11 +334,7 @@ def server(input, output, session) -> None:
         # Create fresh map instance (required by Shiny's matplotlib backend)
         eu_map_instance = EU3_map(
             suptitle=f"Soil moisture index (SMI) for decade {decade_year}-{decade_year + 9}",
-<<<<<<< HEAD
-            title=["CLM5", "mHM"],
-=======
             title=[f"CLM5", f"mHM"],
->>>>>>> 1690582 (sonar qube)
             description="",
             color_mode="dark",
             theme_config=theme_config,
@@ -556,89 +374,6 @@ def server(input, output, session) -> None:
                 extend="both",
             )
 
-<<<<<<< HEAD
-        return fig
-
-    @render.plot
-    def discharge_plot():
-        """Render observed + simulated discharge for the clicked gauge."""
-        # selected_gauge is injected by the Leaflet JS via Shiny.setInputValue;
-        # it doesn't exist until the user clicks, so guard against that.
-        try:
-            gauge_id = input.selected_gauge()
-        except Exception:
-            return None
-        if not gauge_id:
-            return None
-
-        qobs, qsim = get_gauge_discharge(gauge_id)
-        if qobs is None and qsim is None:
-            return None
-
-        # Gauge label from metadata
-        row = gauge_meta.loc[gauge_meta["gauge_id"] == gauge_id]
-        if not row.empty:
-            r = row.iloc[0]
-            title = f"{r['river']} at {r['station']} ({r['country']})"
-        else:
-            title = gauge_id
-
-        tc = get_theme_config("dark")
-        c = tc.colors
-
-        # Aggregate daily → monthly means for a readable comparison
-        import pandas as pd
-
-        qobs_mo = (
-            pd.Series(qobs, index=discharge_time).resample("ME").mean()
-            if qobs is not None
-            else None
-        )
-        qsim_mo = (
-            pd.Series(qsim, index=discharge_time).resample("ME").mean()
-            if qsim is not None
-            else None
-        )
-
-        fig, ax = plt.subplots(figsize=(12, 3.5))
-        fig.patch.set_facecolor(c["background"])
-        ax.set_facecolor(c["background"])
-
-        if qobs_mo is not None:
-            ax.plot(
-                qobs_mo.index,
-                qobs_mo.values,
-                color=c["primary"],
-                linewidth=0.9,
-                alpha=0.9,
-                label="Observed",
-            )
-        if qsim_mo is not None:
-            ax.plot(
-                qsim_mo.index,
-                qsim_mo.values,
-                color="#bb86fc",
-                linewidth=1.2,
-                alpha=0.9,
-                label="Simulated",
-            )
-
-        ax.set_title(title, color=c["text"], fontsize=12, pad=8)
-        ax.set_ylabel("Discharge (m\u00b3 s\u207b\u00b9)", color=c["text"])
-        ax.set_xlabel("Date", color=c["text"])
-        ax.tick_params(colors=c["text"])
-        for spine in ax.spines.values():
-            spine.set_edgecolor(c["border"])
-        ax.legend(
-            facecolor=c["background"],
-            edgecolor=c["border"],
-            labelcolor=c["text"],
-            fontsize=10,
-        )
-        ax.grid(True, color=c["border"], alpha=0.3, linewidth=0.5)
-        fig.tight_layout()
-=======
->>>>>>> 1690582 (sonar qube)
         return fig
 
     @render.plot
