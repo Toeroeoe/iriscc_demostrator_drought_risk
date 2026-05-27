@@ -1,7 +1,11 @@
 import glob
+<<<<<<< HEAD
 import json
 import re
 from datetime import datetime, timedelta
+=======
+import re
+>>>>>>> 4d49927 (discharge data.. and leaflet map. discharge.nc is kept out for now)
 from pathlib import Path
 
 import netCDF4 as nc
@@ -59,6 +63,11 @@ else:
 decade_to_index = {year: idx for idx, year in enumerate(decade_years)}
 
 # ── Streamflow / discharge data ───────────────────────────────────────────────
+<<<<<<< HEAD
+=======
+import json
+from datetime import datetime, timedelta
+>>>>>>> 4d49927 (discharge data.. and leaflet map. discharge.nc is kept out for now)
 
 _streamflow_dir = data_dir / "streamflow"
 
@@ -78,8 +87,13 @@ gauge_meta = _gauge_meta_raw.assign(
     gauge_id=_gauge_meta_raw["grdc_no"].astype(str).str.zfill(10)
 )
 gauge_meta = (
+<<<<<<< HEAD
     gauge_meta[gauge_meta["gauge_id"].isin(list(_nc_gauge_ids))]
     .dropna(subset=["lat", "long"])  # type: ignore[call-overload]
+=======
+    gauge_meta[gauge_meta["gauge_id"].isin(_nc_gauge_ids)]
+    .dropna(subset=["lat", "long"])
+>>>>>>> 4d49927 (discharge data.. and leaflet map. discharge.nc is kept out for now)
     .reset_index(drop=True)
 )
 
@@ -138,7 +152,11 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
 
     return f"""
 <div id="gauge-map"
+<<<<<<< HEAD
      style="height:900px; width:100%; border-radius:6px; overflow:hidden;">
+=======
+     style="height:480px; width:100%; border-radius:6px; overflow:hidden;">
+>>>>>>> 4d49927 (discharge data.. and leaflet map. discharge.nc is kept out for now)
 </div>
 <style>
   .gauge-tooltip {{
@@ -150,10 +168,15 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
     padding: 4px 8px;
     border-radius: 4px;
   }}
+<<<<<<< HEAD
   .gauge-tooltip.leaflet-tooltip-top::before   {{ border-top-color:   #555 !important; }}
   .gauge-tooltip.leaflet-tooltip-left::before  {{ border-left-color:  #555 !important; }}
   /* Keep attribution readable on the light ocean background */
   .leaflet-control-attribution {{ background: rgba(255,255,255,0.7) !important; color: #333 !important; font-size: 10px; }}
+=======
+  .gauge-tooltip.leaflet-tooltip-top::before  {{ border-top-color:  #555 !important; }}
+  .gauge-tooltip.leaflet-tooltip-left::before {{ border-left-color: #555 !important; }}
+>>>>>>> 4d49927 (discharge data.. and leaflet map. discharge.nc is kept out for now)
 </style>
 <script>
 (function () {{
@@ -174,6 +197,7 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
   }};
 
   function initMap() {{
+<<<<<<< HEAD
     // EPSG:3035 LAEA Europe — true equal-area projection (EU standard).
     // Resolutions are in metres/pixel; the array index is the Leaflet zoom level.
     var laea = new L.Proj.CRS(
@@ -225,6 +249,24 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
     data.forEach(function (g) {{
       var m = L.circleMarker([g.lat, g.lon],
                              Object.assign({{pane: 'gaugePane'}}, defaultStyle)).addTo(map);
+=======
+    var map = L.map('gauge-map').setView([52.0, 15.0], 4);
+
+    L.tileLayer(
+      'https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png',
+      {{
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors' +
+          ' &copy; <a href="https://carto.com/">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 18
+      }}
+    ).addTo(map);
+
+    data.forEach(function (g) {{
+      var m = L.circleMarker([g.lat, g.lon],
+                             Object.assign({{}}, defaultStyle)).addTo(map);
+>>>>>>> 4d49927 (discharge data.. and leaflet map. discharge.nc is kept out for now)
 
       m.bindTooltip(
         '<b>' + g.station + '</b><br><i>' + g.river + '</i> &mdash; ' + g.country,
@@ -268,6 +310,7 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
 
 # Built once at import time – reused for the lifetime of the Shiny process
 gauge_map_html = _build_gauge_map_html(gauge_meta)
+<<<<<<< HEAD
 
 # ── SPI (Standardized Precipitation Index) decadal data ───────────────────────────
 
@@ -298,3 +341,5 @@ for _f in _spi_files:
 SPI_full = np.array(_spi_arrays)  # (n_decades, 1544, 1592)
 
 spi_decade_to_index = {year: idx for idx, year in enumerate(_spi_decade_years)}
+=======
+>>>>>>> 4d49927 (discharge data.. and leaflet map. discharge.nc is kept out for now)
