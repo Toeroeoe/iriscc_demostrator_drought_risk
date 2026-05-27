@@ -10,9 +10,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from shared import (
     CLM5_smi_full,
-    SPI_full,
-    SPI_lat,
-    SPI_lon,
     decade_to_index,
     df,
     discharge_time,
@@ -22,7 +19,6 @@ from shared import (
     images,
     lat,
     lon,
-    spi_decade_to_index,
 )
 from shiny import App, render, ui
 from shiny.types import ImgData
@@ -76,9 +72,7 @@ page_droughts = ui.page_fluid(
             width="300px",
         ),  # Set sidebar width (default is 250px)
         ui.navset_card_pill(
-            ui.nav_panel(
-                "Meteorological", ui.output_plot("render_spi_map", height="600px")
-            ),
+            ui.nav_panel("Meteorological", ""),
             ui.nav_panel(
                 "Hydrological",
                 ui.p(
@@ -91,7 +85,7 @@ page_droughts = ui.page_fluid(
             ui.nav_panel(
                 "Agricultural", ui.output_plot("render_eu3_map", height="800px")
             ),
-            title="Drought indices",
+            title="Drought occurence",
         ),
         ui.navset_card_pill(
             ui.nav_panel("Crop yield", ""),
@@ -202,13 +196,6 @@ app_ui = ui.page_fluid(
             href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
         ),
         ui.tags.script(src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"),
-        # Proj4.js + Proj4Leaflet — needed for non-Mercator CRS in Leaflet
-        ui.tags.script(
-            src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.15.0/proj4.js"
-        ),
-        ui.tags.script(
-            src="https://cdn.jsdelivr.net/npm/proj4leaflet@1.0.2/src/proj4leaflet.js"
-        ),
         ui.tags.style("""
                     /* Font Strategy - Consistent across Shiny & Matplotlib */
                     body {
@@ -333,77 +320,6 @@ def server(input, output, session) -> None:
         return p.set(xlabel=None)
 
     @render.plot
-    def render_spi_map():
-        from plots import EU1_map
-
-        selected_date = input.dec()
-        decade_year = selected_date.year
-        model = input.model()
-
-        _model_labels = {
-            "ERA5": "ERA5",
-            "ensemble_mean": "Ensemble mean",
-            "CESM2": "CESM2",
-            "GFDL-ESM4": "GFDL-ESM4",
-        }
-        model_label = _model_labels.get(model, model)
-
-        # Only ERA5 forcing data is currently available for SPI
-        if model != "ERA5":
-            c = theme_config.colors
-            fig, ax = plt.subplots(figsize=(4, 1.5))
-            fig.patch.set_facecolor(c["background"])
-            ax.set_facecolor(c["background"])
-            ax.text(
-                0.5,
-                0.5,
-                f'SPI data for "{model_label}" is not yet available.',
-                ha="center",
-                va="center",
-                color=c["text"],
-                fontsize=11,
-                transform=ax.transAxes,
-            )
-            ax.axis("off")
-            return fig
-
-        time_index = spi_decade_to_index.get(decade_year)
-        if time_index is None:
-            decade_year = min(spi_decade_to_index.keys())
-            time_index = spi_decade_to_index[decade_year]
-
-        spi_data = SPI_full[time_index]
-
-        spi_map = EU1_map(
-            suptitle=(
-                f"Standardized Precipitation Index (SPI)\n"
-                f"{model_label}, {decade_year}–{decade_year + 9}"
-            ),
-            title=[],  # single title only — avoids overlap with suptitle
-            description="",
-            color_mode="dark",
-            theme_config=theme_config,
-            cbar_width_ratio=0.04,
-        )
-        fig, _, _ = spi_map.create()
-
-        spi_map.pcolormesh(
-            SPI_lon,
-            SPI_lat,
-            spi_data,
-            cmap="RdBu",
-            vmin=-0.5,
-            vmax=0.5,
-            alpha=0.85,
-        )
-        spi_map.colorbar(
-            spi_map.pcolormesh_obj,
-            cbar_label="SPI (dimensionless)",
-            extend="both",
-        )
-        return fig
-
-    @render.plot
     def render_eu3_map():
         from plots import EU3_map
         from shared import mHM_smi_full
@@ -437,7 +353,7 @@ def server(input, output, session) -> None:
         # Create fresh map instance (required by Shiny's matplotlib backend)
         eu_map_instance = EU3_map(
             suptitle=f"Soil moisture index (SMI) for decade {decade_year}-{decade_year + 9}",
-            title=["CLM5", "mHM"],
+            title=[f"CLM5", f"mHM"],
             description="",
             color_mode="dark",
             theme_config=theme_config,
@@ -531,7 +447,7 @@ def server(input, output, session) -> None:
                 color=c["primary"],
                 linewidth=0.9,
                 alpha=0.9,
-                label="Observed",
+                label="Observed (Q\u2080\u2087\u2085)",
             )
         if qsim_mo is not None:
             ax.plot(
@@ -540,7 +456,7 @@ def server(input, output, session) -> None:
                 color="#bb86fc",
                 linewidth=1.2,
                 alpha=0.9,
-                label="Simulated",
+                label="Simulated (Q\u209b\u1d35\u2098)",
             )
 
         ax.set_title(title, color=c["text"], fontsize=12, pad=8)

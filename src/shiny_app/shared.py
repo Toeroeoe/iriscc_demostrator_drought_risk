@@ -1,7 +1,5 @@
 import glob
-import json
 import re
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import netCDF4 as nc
@@ -59,6 +57,8 @@ else:
 decade_to_index = {year: idx for idx, year in enumerate(decade_years)}
 
 # ── Streamflow / discharge data ───────────────────────────────────────────────
+import json
+from datetime import datetime, timedelta
 
 _streamflow_dir = data_dir / "streamflow"
 
@@ -78,8 +78,8 @@ gauge_meta = _gauge_meta_raw.assign(
     gauge_id=_gauge_meta_raw["grdc_no"].astype(str).str.zfill(10)
 )
 gauge_meta = (
-    gauge_meta[gauge_meta["gauge_id"].isin(list(_nc_gauge_ids))]
-    .dropna(subset=["lat", "long"])  # type: ignore[call-overload]
+    gauge_meta[gauge_meta["gauge_id"].isin(_nc_gauge_ids)]
+    .dropna(subset=["lat", "long"])
     .reset_index(drop=True)
 )
 
@@ -138,7 +138,7 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
 
     return f"""
 <div id="gauge-map"
-     style="height:900px; width:100%; border-radius:6px; overflow:hidden;">
+     style="height:480px; width:100%; border-radius:6px; overflow:hidden;">
 </div>
 <style>
   .gauge-tooltip {{
@@ -150,10 +150,8 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
     padding: 4px 8px;
     border-radius: 4px;
   }}
-  .gauge-tooltip.leaflet-tooltip-top::before   {{ border-top-color:   #555 !important; }}
-  .gauge-tooltip.leaflet-tooltip-left::before  {{ border-left-color:  #555 !important; }}
-  /* Keep attribution readable on the light ocean background */
-  .leaflet-control-attribution {{ background: rgba(255,255,255,0.7) !important; color: #333 !important; font-size: 10px; }}
+  .gauge-tooltip.leaflet-tooltip-top::before  {{ border-top-color:  #555 !important; }}
+  .gauge-tooltip.leaflet-tooltip-left::before {{ border-left-color: #555 !important; }}
 </style>
 <script>
 (function () {{
@@ -174,57 +172,22 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
   }};
 
   function initMap() {{
-    // EPSG:3035 LAEA Europe — true equal-area projection (EU standard).
-    // Resolutions are in metres/pixel; the array index is the Leaflet zoom level.
-    var laea = new L.Proj.CRS(
-      'EPSG:3035',
-      '+proj=laea +lat_0=52 +lon_0=10 +x_0=4321000 +y_0=3210000 +ellps=GRS80 +units=m +no_defs',
-      {{ resolutions: [8000, 4000, 2000, 1000, 500, 250, 125, 62.5, 31.25] }}
-    );
+    var map = L.map('gauge-map').setView([52.0, 15.0], 4);
 
-    var map = L.map('gauge-map', {{ crs: laea, maxZoom: 8 }}).setView([54.0, 15.0], 1);
-
-    // Ocean colour via CSS (no tile layer needed)
-    document.getElementById('gauge-map').style.background = '#a6cee3';
-
-    // Dedicated pane for gauge markers so they always render above the GeoJSON
-    // land layer regardless of the order in which async fetches complete.
-    map.createPane('gaugePane');
-    map.getPane('gaugePane').style.zIndex = 620;  // above overlayPane (400), below tooltipPane (650)
-    map.getPane('gaugePane').style.pointerEvents = 'auto';
-
-    // Land masses: Natural Earth 50 m – better coastline detail.
-    // Leaflet reprojects WGS-84 GeoJSON to the map CRS automatically.
-    fetch('https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_land.geojson')
-      .then(function (r) {{ return r.json(); }})
-      .then(function (geo) {{
-        L.geoJSON(geo, {{
-          style: {{
-            fillColor: '#636363',
-            fillOpacity: 0.9,
-            color:      '#999',
-            weight:     0.5
-          }}
-        }}).addTo(map);
-      }});
-
-    // Major lakes (50 m) – paint them in ocean colour so they read as water.
-    fetch('https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_lakes.geojson')
-      .then(function (r) {{ return r.json(); }})
-      .then(function (geo) {{
-        L.geoJSON(geo, {{
-          style: {{
-            fillColor: '#a6cee3',
-            fillOpacity: 1.0,
-            color:      '#888',
-            weight:     0.4
-          }}
-        }}).addTo(map);
-      }});
+    L.tileLayer(
+      'https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png',
+      {{
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors' +
+          ' &copy; <a href="https://carto.com/">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 18
+      }}
+    ).addTo(map);
 
     data.forEach(function (g) {{
       var m = L.circleMarker([g.lat, g.lon],
-                             Object.assign({{pane: 'gaugePane'}}, defaultStyle)).addTo(map);
+                             Object.assign({{}}, defaultStyle)).addTo(map);
 
       m.bindTooltip(
         '<b>' + g.station + '</b><br><i>' + g.river + '</i> &mdash; ' + g.country,
@@ -268,33 +231,3 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
 
 # Built once at import time – reused for the lifetime of the Shiny process
 gauge_map_html = _build_gauge_map_html(gauge_meta)
-
-# ── SPI (Standardized Precipitation Index) decadal data ───────────────────────────
-
-_spi_files = sorted(glob.glob(str(data_dir / "decadal_SXI_P/SXI_P_*_timmean.nc")))
-
-if len(_spi_files) == 0:
-    raise FileNotFoundError("No SXI_P timmean files found in data/decadal_SXI_P/.")
-
-# Decade start years extracted from filenames (e.g. SXI_P_92D_1960_1969_timmean.nc)
-_spi_decade_years = []
-for _f in _spi_files:
-    _m = re.search(r"(\d{4})_(\d{4})", _f)
-    if _m:
-        _spi_decade_years.append(int(_m.group(1)))
-
-# 2-D lat/lon (curvilinear) – identical across all files, load once
-with nc.Dataset(_spi_files[0]) as _ds:
-    SPI_lat = np.ma.filled(_ds.variables["lat"][:].astype(float), np.nan)
-    SPI_lon = np.ma.filled(_ds.variables["lon"][:].astype(float), np.nan)
-
-# Stack all decades: shape (n_decades, lat, lon)
-_spi_arrays = []
-for _f in _spi_files:
-    with nc.Dataset(_f) as _ds:
-        _spi_arrays.append(
-            np.ma.filled(_ds.variables["SXI_P"][0].astype(float), np.nan)
-        )
-SPI_full = np.array(_spi_arrays)  # (n_decades, 1544, 1592)
-
-spi_decade_to_index = {year: idx for idx, year in enumerate(_spi_decade_years)}
