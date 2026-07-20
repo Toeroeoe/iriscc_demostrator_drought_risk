@@ -10,7 +10,7 @@ thresh=-1
 
 for y0 in $(seq $dec1 10 $dec2); do
   y1=$((y0 + 9))
-  tmp=$(mktemp --suffix=.nc
+  tmp=$(mktemp --suffix=.nc)
 
   echo "Processing ${y0}-${y1}"
   cdo -selyear,${y0}/${y1} -selvar,$var $ifile $tmp   # read full file once
