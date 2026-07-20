@@ -9,6 +9,6 @@ thresh=-1
 
 for y0 in $(seq $dec1 10 $dec2); do
   y1=$((y0 + 9))
-  cdo -timmean -lec,$thresh -selyear,${y0}/${y1} $ifile \
+  cdo -selvar,SXI_P -timmean -lec,$thresh -selyear,${y0}/${y1} $ifile \
   $odir/${oprefix}${y0}_${y1}${osuffix}.nc
 done
