@@ -7,6 +7,7 @@ osuffix=_dfreq
 dec1=1960
 dec2=2010
 thresh=-1
+tstep=8
 
 for y0 in $(seq $dec1 10 $dec2); do
   y1=$((y0 + 9))
