@@ -12,8 +12,6 @@ app_dir = Path(__file__).parent
 data_dir = Path(__file__).parent.parent.parent / "data"
 images = Path(__file__).parent.parent.parent / "images"
 
-#df = pd.read_csv(data_dir / "penguins.csv")
-
 # Load decadal data files
 decadal_means_clm5_files = sorted(
     glob.glob(str(data_dir / "decadal_SMI/CLM5/decadal_stats_*timmean.nc_classic.nc"))
@@ -300,3 +298,40 @@ for _f in _spi_files:
 SPI_full = np.array(_spi_arrays)  # (n_decades, 1544, 1592)
 
 spi_decade_to_index = {year: idx for idx, year in enumerate(_spi_decade_years)}
+
+
+# ── SPI decadal statistics (frequency, peak severity, spell length) ──────────
+# Files produced by data/processing/decadal_statistics.sh, one per decade:
+#   SXI_P_92D_<year>_dfreq.nc     fraction of time in drought (0..1)
+#   SXI_P_92D_<year>_min.nc       most negative SPI reached (peak severity)
+#   SXI_P_92D_<year>_maxspell.nc  longest consecutive dry spell (days)
+
+
+def _load_spi_stat(suffix: str) -> dict:
+    """Load decadal SPI statistic files for a given suffix.
+
+    Returns a mapping {decade_start_year: 2-D numpy array}. Missing/masked
+    cells are filled with NaN. Returns an empty dict if no files are present
+    (so the app degrades gracefully when a statistic has not been computed).
+    """
+    pattern = str(data_dir / f"decadal_SXI_P/SXI_P_92D_*_{suffix}.nc")
+    out: dict = {}
+    for _f in sorted(glob.glob(pattern)):
+        _m = re.search(rf"SXI_P_92D_(\d{{4}})_{suffix}\.nc$", _f)
+        if not _m:
+            continue
+        with nc.Dataset(_f) as _ds:
+            out[int(_m.group(1))] = np.ma.filled(
+                _ds.variables["SXI_P"][0].astype(float), np.nan
+            )
+    return out
+
+
+# Per-statistic decadal data keyed by statistic name, then decade start year.
+# "mean" reuses the existing timmean stack for a uniform lookup API.
+SPI_STAT_DATA: dict = {
+    "mean": {year: SPI_full[idx] for year, idx in spi_decade_to_index.items()},
+    "dfreq": _load_spi_stat("dfreq"),
+    "min": _load_spi_stat("min"),
+    "maxspell": _load_spi_stat("maxspell"),
+}

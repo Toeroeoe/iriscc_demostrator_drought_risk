@@ -7,12 +7,11 @@ Returns:
 from datetime import date, timedelta
 
 import matplotlib.pyplot as plt
-import seaborn as sns
 from shared import (
     CLM5_smi_full,
-    SPI_full,
     SPI_lat,
     SPI_lon,
+    SPI_STAT_DATA,
     decade_to_index,
     discharge_time,
     gauge_map_html,
@@ -21,7 +20,6 @@ from shared import (
     images,
     lat,
     lon,
-    spi_decade_to_index,
 )
 from shiny import App, render, ui
 from shiny.types import ImgData
@@ -29,6 +27,75 @@ from shinyswatch import theme
 from theme_config import GOOGLE_FONTS_URL, get_theme_config
 
 dark_theme = theme.darkly
+
+# Atmospheric-forcing display labels (shared by the map and its caption).
+MODEL_LABELS = {
+    "ERA5": "ERA5",
+    "ensemble_mean": "Ensemble mean",
+    "CESM2": "CESM2",
+    "GFDL-ESM4": "GFDL-ESM4",
+}
+
+# Per-statistic plotting configuration for the meteorological (SPI) map.
+# `scale` is applied to the raw field before plotting (e.g. fraction → %).
+# `meaning` is a plain-language clause used to build the plot caption.
+SPI_STATISTICS = {
+    "mean": {
+        "label": "Mean index",
+        "cmap": "RdBu",
+        "vmin": -0.5,
+        "vmax": 0.5,
+        "extend": "both",
+        "scale": 1.0,
+        "cbar_label": "Mean SPI (dimensionless)",
+        "meaning": (
+            "the decadal average of the 92-day SPI. Values below zero mark "
+            "drier-than-average conditions, but the decadal mean smooths over "
+            "individual dry and wet spells and is hard to interpret on its own"
+        ),
+    },
+    "dfreq": {
+        "label": "Drought frequency",
+        "cmap": "YlOrRd",
+        "vmin": 0.0,
+        "vmax": 40.0,
+        "extend": "max",
+        "scale": 100.0,
+        "cbar_label": "Time in drought (%)",
+        "meaning": (
+            "the share of time the 92-day SPI stayed at or below \u22121 "
+            "(moderate drought or worse); higher values mean drought conditions "
+            "occurred more often during the decade"
+        ),
+    },
+    "min": {
+        "label": "Peak severity",
+        "cmap": "YlOrRd_r",
+        "vmin": -4.0,
+        "vmax": -1.0,
+        "extend": "min",
+        "scale": 1.0,
+        "cbar_label": "Minimum SPI reached",
+        "meaning": (
+            "the most negative 92-day SPI reached during the decade — the single "
+            "most severe meteorological drought; more negative values indicate "
+            "more extreme dry peaks"
+        ),
+    },
+    "maxspell": {
+        "label": "Longest dry spell",
+        "cmap": "YlOrRd",
+        "vmin": 0.0,
+        "vmax": 200.0,
+        "extend": "max",
+        "scale": 1.0,
+        "cbar_label": "Longest spell (days)",
+        "meaning": (
+            "the length of the longest uninterrupted period with the 92-day SPI "
+            "at or below \u22121; longer spells indicate more persistent drought"
+        ),
+    },
+}
 
 # The contents of the first 'page' is a navset with two 'panels'.
 page_droughts = ui.page_fluid(
@@ -91,6 +158,17 @@ page_droughts = ui.page_fluid(
                 ticks=True,
             ),
             ui.input_select(
+                "statistic",
+                "Statistic",
+                choices={
+                    "dfreq": "Drought frequency",
+                    "maxspell": "Longest dry spell",
+                    "min": "Peak severity",
+                    "mean": "Mean index",
+                },
+                selected="dfreq",
+            ),
+            ui.input_select(
                 "model",
                 "Atmospheric forcing",
                 choices={
@@ -116,7 +194,9 @@ page_droughts = ui.page_fluid(
         ),  # Set sidebar width (default is 250px)
         ui.navset_card_pill(
             ui.nav_panel(
-                "Meteorological", ui.output_plot("render_spi_map", height="600px")
+                "Meteorological",
+                ui.output_plot("render_spi_map", height="600px"),
+                ui.output_ui("spi_caption"),
             ),
             ui.nav_panel(
                 "Agricultural", ui.output_plot("render_eu3_map", height="800px")
@@ -361,63 +441,56 @@ def server(input, output, session) -> None:
     # Use dark theme with custom fonts
     theme_config = get_theme_config("dark")
 
-    @render.plot
-    def hist():
-        p = sns.histplot(
-            df,
-            x=input.var(),
-            facecolor=theme_config.colors["primary"],
-            edgecolor=theme_config.palette["text"],
+    def _message_fig(message: str):
+        """Return a small figure showing an informational message."""
+        c = theme_config.colors
+        fig, ax = plt.subplots(figsize=(4, 1.5))
+        fig.patch.set_facecolor(c["background"])
+        ax.set_facecolor(c["background"])
+        ax.text(
+            0.5,
+            0.5,
+            message,
+            ha="center",
+            va="center",
+            color=c["text"],
+            fontsize=11,
+            wrap=True,
+            transform=ax.transAxes,
         )
-        return p.set(xlabel=None)
+        ax.axis("off")
+        return fig
 
     @render.plot
     def render_spi_map():
         from plots import EU1_map
 
-        selected_date = input.dec()
-        decade_year = selected_date.year
+        decade_year = input.dec().year
         model = input.model()
-
-        _model_labels = {
-            "ERA5": "ERA5",
-            "ensemble_mean": "Ensemble mean",
-            "CESM2": "CESM2",
-            "GFDL-ESM4": "GFDL-ESM4",
-        }
-        model_label = _model_labels.get(model, model)
+        stat_key = input.statistic()
+        stat = SPI_STATISTICS.get(stat_key, SPI_STATISTICS["mean"])
+        model_label = MODEL_LABELS.get(model, model)
 
         # Only ERA5 forcing data is currently available for SPI
         if model != "ERA5":
-            c = theme_config.colors
-            fig, ax = plt.subplots(figsize=(4, 1.5))
-            fig.patch.set_facecolor(c["background"])
-            ax.set_facecolor(c["background"])
-            ax.text(
-                0.5,
-                0.5,
-                f'SPI data for "{model_label}" is not yet available.',
-                ha="center",
-                va="center",
-                color=c["text"],
-                fontsize=11,
-                transform=ax.transAxes,
+            return _message_fig(
+                f'SPI data for "{model_label}" is not yet available.'
             )
-            ax.axis("off")
-            return fig
 
-        time_index = spi_decade_to_index.get(decade_year)
-        if time_index is None:
-            decade_year = min(spi_decade_to_index.keys())
-            time_index = spi_decade_to_index[decade_year]
+        stat_data = SPI_STAT_DATA.get(stat_key, {})
+        if not stat_data:
+            return _message_fig(
+                f'The "{stat["label"]}" statistic has not been computed yet.'
+            )
 
-        spi_data = SPI_full[time_index]
+        # Fall back to the earliest available decade if this one is missing
+        if decade_year not in stat_data:
+            decade_year = min(stat_data.keys())
+
+        spi_data = stat_data[decade_year] * stat["scale"]
 
         spi_map = EU1_map(
-            suptitle=(
-                f"Standardized Precipitation Index (SPI)\n"
-                f"{model_label}, {decade_year}\u2013{decade_year + 9}"
-            ),
+            suptitle=f"Meteorological drought \u2014 {stat['label']}",
             title=[],  # single title only — avoids overlap with suptitle
             description="",
             color_mode="dark",
@@ -430,22 +503,69 @@ def server(input, output, session) -> None:
             SPI_lon,
             SPI_lat,
             spi_data,
-            cmap="RdBu",
-            vmin=-0.5,
-            vmax=0.5,
+            cmap=stat["cmap"],
+            vmin=stat["vmin"],
+            vmax=stat["vmax"],
             alpha=0.85,
         )
         spi_map.colorbar(
             spi_map.pcolormesh_obj,
-            cbar_label="SPI (dimensionless)",
-            extend="both",
+            cbar_label=stat["cbar_label"],
+            extend=stat["extend"],
         )
         return fig
+
+    @render.ui
+    def spi_caption():
+        decade_year = input.dec().year
+        model = input.model()
+        stat_key = input.statistic()
+        stat = SPI_STATISTICS.get(stat_key, SPI_STATISTICS["mean"])
+        model_label = MODEL_LABELS.get(model, model)
+
+        if model != "ERA5":
+            text = (
+                f'SPI data for the \u201c{model_label}\u201d forcing is not yet '
+                "available. Select \u201cERA5\u201d to view the maps."
+            )
+        else:
+            stat_data = SPI_STAT_DATA.get(stat_key, {})
+            shown_year = (
+                decade_year
+                if decade_year in stat_data or not stat_data
+                else min(stat_data.keys())
+            )
+            text = (
+                f"Showing the {stat['label'].lower()} of meteorological "
+                "drought, derived from the Standardized Precipitation Index "
+                "(SPI, 92-day accumulation) forced by "
+                f"{model_label}, for the decade "
+                f"{shown_year}\u2013{shown_year + 9}. The map shows "
+                f"{stat['meaning']}. All indices are computed relative to the "
+                "1960\u20131999 reference period."
+            )
+
+        return ui.div(
+            text,
+            style=(
+                "text-align: left; color: #aaa; font-size: 0.85em; "
+                "line-height: 1.5; padding: 10px 4px 2px 4px;"
+            ),
+        )
 
     @render.plot
     def render_eu3_map():
         from plots import EU3_map
         from shared import mHM_smi_full
+
+        # Soil-moisture (SMI) currently only has the decadal mean precomputed;
+        # the other statistics exist for the meteorological (SPI) index only.
+        if input.statistic() != "mean":
+            return _message_fig(
+                "Only the decadal mean is currently available for soil "
+                "moisture (SMI).\nSelect \u201cMean index\u201d, or open the "
+                "Meteorological tab for other statistics."
+            )
 
         # Get selected decade from the "dec" slider input
         selected_date = input.dec()
@@ -597,10 +717,6 @@ def server(input, output, session) -> None:
         ax.grid(True, color=c["border"], alpha=0.3, linewidth=0.5)
         fig.tight_layout()
         return fig
-
-    @render.data_frame
-    def data():
-        return df[["species", "island"]]
 
     @render.image
     def image():
