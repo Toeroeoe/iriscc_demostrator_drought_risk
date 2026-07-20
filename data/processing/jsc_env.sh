@@ -1,3 +1,5 @@
+module purge --force
+module load Stages/2026
 module load GCC
 module load OpenMPI
 module load HDF5
