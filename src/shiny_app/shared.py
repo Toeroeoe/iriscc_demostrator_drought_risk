@@ -12,7 +12,7 @@ app_dir = Path(__file__).parent
 data_dir = Path(__file__).parent.parent.parent / "data"
 images = Path(__file__).parent.parent.parent / "images"
 
-df = pd.read_csv(data_dir / "penguins.csv")
+#df = pd.read_csv(data_dir / "penguins.csv")
 
 # Load decadal data files
 decadal_means_clm5_files = sorted(
