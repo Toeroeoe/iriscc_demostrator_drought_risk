@@ -34,13 +34,53 @@ dark_theme = theme.darkly
 # The contents of the first 'page' is a navset with two 'panels'.
 page_droughts = ui.page_fluid(
     ui.card(
-        "Space for introductory text about droughts and their impacts.",
-        height="250px",
+        ui.markdown(
+            """
+
+            Droughts are among the most far-reaching climate-related hazards.
+            They develop slowly, but their effects can be severe and widespread. A drought is defined as precipitation persistently below normal levels (a *meteorological drought*). If the deficit continues and is potentially accompanied by an increased water demand from a dry atmosphere, it depletes soil moisture and reduces water available to plants (an *agricultural drought*). Eventually, it can lower river discharge (a *hydrological drought*).
+
+            These interlinked forms of drought place terrestrial ecosystems and
+            the services they provide under considerable stress. They reduce
+            crop yields and forest carbon uptake, threaten drinking-water and
+            energy supplies, and can amplify heatwaves and the risk of
+            wildfires. Under a warming climate, droughts are expected to become
+            more frequent and more severe across many regions of Europe.
+
+            This demonstrator lets you explore how meteorological,
+            hydrological, and agricultural droughts have evolved over recent
+            decades and what they mean for ecosystem functioning. Use the
+            **view settings** on the left to select a decade, atmospheric
+            forcing, and emission scenario, and switch between the tabs to
+            examine drought occurrence and its impacts.
+            """
+        ),
         style="text-align: left;",
     ),
     ui.page_sidebar(
         ui.sidebar(
             "View settings",
+            ui.div(
+                ui.tags.strong(
+                    "Reference period: 1960–1999",
+                    style="font-size: 0.85em;",
+                ),
+                ui.tags.br(),
+                ui.tags.span(
+                    "All drought indices are calculated relative to this "
+                    "baseline period.",
+                    style="font-size: 0.75em;",
+                ),
+                style=(
+                    "border: 1px solid #f0ad4e; "
+                    "border-left: 4px solid #f0ad4e; "
+                    "background-color: rgba(240, 173, 78, 0.12); "
+                    "border-radius: 6px; "
+                    "padding: 10px 12px; "
+                    "margin-bottom: 14px; "
+                    "text-align: left;"
+                ),
+            ),
             ui.input_slider(
                 "dec",
                 "Decade",
@@ -80,6 +120,9 @@ page_droughts = ui.page_fluid(
                 "Meteorological", ui.output_plot("render_spi_map", height="600px")
             ),
             ui.nav_panel(
+                "Agricultural", ui.output_plot("render_eu3_map", height="800px")
+            ),
+            ui.nav_panel(
                 "Hydrological",
                 ui.p(
                     "Click a gauge marker to view its discharge time series.",
@@ -87,9 +130,6 @@ page_droughts = ui.page_fluid(
                 ),
                 ui.HTML(gauge_map_html),
                 ui.output_plot("discharge_plot", height="320px"),
-            ),
-            ui.nav_panel(
-                "Agricultural", ui.output_plot("render_eu3_map", height="800px")
             ),
             title="Drought occurence",
         ),
