@@ -10,6 +10,14 @@ thresh=-1
 
 for y0 in $(seq $dec1 10 $dec2); do
   y1=$((y0 + 9))
-  cdo -timmean -lec,$thresh -selyear,${y0}/${y1} -selvar,$var $ifile \
-  $odir/${oprefix}${y0}_${y1}${osuffix}.nc
+
+  echo "Processing ${y0}-${y1}"
+  cdo -selyear,${y0}/${y1} -selvar,$var $ifile $tmp   # read full file once
+  echo "  - computing statistics: relative drought time"
+  cdo -timmean -lec,$thresh $tmp  ${base}_dfreq.nc     # then operate on the
+  echo "  - computing statistics: min drought index"
+  cdo -timmin              $tmp  ${base}_min.nc         # small decade file
+  echo "  - computing statistics: longest drought spell"
+  cdo -mulc,$tstep -timmax -consecsum -lec,$thresh $tmp ${base}_maxspell.nc
+  rm -f "$tmp"
 done
