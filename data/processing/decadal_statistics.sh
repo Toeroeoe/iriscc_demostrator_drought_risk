@@ -14,12 +14,12 @@ for y0 in $(seq $dec1 10 $dec2); do
   tmp=$(mktemp --suffix=.nc)
 
   echo "Processing ${y0}-${y1}"
-  cdo -selyear,${y0}/${y1} -selvar,$var $ifile $tmp   # read full file once
+  cdo -selyear,${y0}/${y1} -selvar,$var $ifile $tmp
   echo "  - computing statistics: relative drought time"
-  cdo -timmean -lec,$thresh $tmp  ${base}_dfreq.nc     # then operate on the
+  cdo -timmean -lec,$thresh $tmp  ${odir}/${oprefix}${y0}${osuffix}.nc
   echo "  - computing statistics: min drought index"
-  cdo -timmin              $tmp  ${base}_min.nc         # small decade file
+  cdo -timmin $tmp  ${odir}/${oprefix}${y0}${osuffix}.nc
   echo "  - computing statistics: longest drought spell"
-  cdo -mulc,$tstep -timmax -consecsum -lec,$thresh $tmp ${base}_maxspell.nc
+  cdo -mulc,$tstep -timmax -consecsum -lec,$thresh $tmp ${odir}/${oprefix}${y0}${osuffix}.nc
   rm -f "$tmp"
 done
