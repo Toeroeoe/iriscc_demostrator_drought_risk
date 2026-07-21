@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import List, Literal, Optional
 
 import cartopy.crs as ccrs
@@ -10,6 +11,62 @@ from cartopy.mpl import geoaxes
 from matplotlib.gridspec import GridSpec
 from matplotlib.layout_engine import LayoutEngine
 from theme_config import ThemeConfig
+
+
+# ── Cached static basemap ────────────────────────────────────────────────────
+# The ocean/land/coastline basemap never changes, but cartopy re-reads and
+# re-parses the Natural Earth shapefiles on every add_feature()/coastlines()
+# call. Caching the parsed geometries once per process removes that repeated
+# disk I/O + parsing from every plot render.
+_PLATE_CARREE = ccrs.PlateCarree()
+
+
+@lru_cache(maxsize=None)
+def _cached_ne_geometries(category: str, name: str, scale: str) -> tuple:
+    """Load and cache Natural Earth geometries once per process."""
+    feature = cfeature.NaturalEarthFeature(category, name, scale)
+    return tuple(feature.geometries())
+
+
+def _add_cached_basemap(
+    ax,
+    *,
+    ocean_color: str,
+    land_color: str,
+    alpha_ocean: float,
+    alpha_land: float,
+    coastline_lw: float,
+) -> None:
+    """Draw the static ocean/land/coastline basemap from cached geometries.
+
+    Mirrors the previous ``add_feature(OCEAN/LAND)`` + ``coastlines()`` calls
+    (same 110m Natural Earth data, colours and z-orders) but reuses geometries
+    cached across renders instead of re-reading the shapefiles each time.
+    """
+    ax.add_geometries(
+        _cached_ne_geometries("physical", "ocean", "110m"),
+        _PLATE_CARREE,
+        facecolor=ocean_color,
+        edgecolor=ocean_color,
+        alpha=alpha_ocean,
+        zorder=0,
+    )
+    ax.add_geometries(
+        _cached_ne_geometries("physical", "land", "110m"),
+        _PLATE_CARREE,
+        facecolor=land_color,
+        edgecolor=land_color,
+        alpha=alpha_land,
+        zorder=0,
+    )
+    ax.add_geometries(
+        _cached_ne_geometries("physical", "coastline", "110m"),
+        _PLATE_CARREE,
+        facecolor="none",
+        edgecolor="black",
+        linewidth=coastline_lw,
+        zorder=2,
+    )
 
 
 class _NoOpLayoutEngine(LayoutEngine):
@@ -47,7 +104,10 @@ class demo_fig:
 
     color_mode: Literal["light", "dark"] = "dark"
 
-    dpi: int = 300
+    # Screen-resolution DPI. These maps are only ever displayed in the browser,
+    # so print-quality DPI just makes rendering slower and the PNG payload
+    # larger with no visible benefit.
+    dpi: int = 100
 
     fy: float = 6.7
     fx: float = 4
@@ -238,13 +298,14 @@ class EU1_map(demo_fig):
         )
         self.ax.tick_params(colors=self.theme_config.colors["text"])
 
-        self.ax.add_feature(  # type: ignore[union-attr]
-            cfeature.OCEAN, color=self.ocean_color, alpha=self.alpha_ocean, zorder=0
+        _add_cached_basemap(
+            self.ax,
+            ocean_color=self.ocean_color,
+            land_color=self.land_color,
+            alpha_ocean=self.alpha_ocean,
+            alpha_land=self.alpha_land,
+            coastline_lw=self.coastline_lw,
         )
-        self.ax.add_feature(  # type: ignore[union-attr]
-            cfeature.LAND, color=self.land_color, alpha=self.alpha_land, zorder=0
-        )
-        self.ax.coastlines(linewidth=self.coastline_lw, zorder=2)  # type: ignore[union-attr]
 
         proj_lon_extents, proj_lat_extents, _ = self.ax.projection.transform_points(  # type: ignore[union-attr]
             self.plot_projection,
@@ -386,15 +447,14 @@ class EU3_map(demo_fig):
             if not isinstance(ax, geoaxes.GeoAxesSubplot):
                 raise TypeError("Expected a GeoAxesSubplot for the map axes.")
 
-            ax.add_feature(
-                cfeature.OCEAN, color=self.ocean_color, alpha=self.alpha_ocean, zorder=0
+            _add_cached_basemap(
+                ax,
+                ocean_color=self.ocean_color,
+                land_color=self.land_color,
+                alpha_ocean=self.alpha_ocean,
+                alpha_land=self.alpha_land,
+                coastline_lw=self.coastline_lw,
             )
-
-            ax.add_feature(
-                cfeature.LAND, color=self.land_color, alpha=self.alpha_land, zorder=0
-            )
-
-            ax.coastlines(linewidth=self.coastline_lw, zorder=2)
 
             proj_lon_extents, proj_lat_extents, _ = ax.projection.transform_points(
                 self.plot_projection,

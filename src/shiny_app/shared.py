@@ -12,6 +12,61 @@ app_dir = Path(__file__).parent
 data_dir = Path(__file__).parent.parent.parent / "data"
 images = Path(__file__).parent.parent.parent / "images"
 
+
+class _LazyDecadeStack:
+    """Indexable, lazily-loaded view over a NetCDF variable's decade axis.
+
+    ``stack[i]`` reads and returns only decade ``i`` (as float32) rather than
+    pulling every decade into memory at import time. Slices are cached, so
+    repeated views of the same decade are free. Only the ndarray operations the
+    app relies on are implemented: integer indexing and ``len()``.
+    """
+
+    def __init__(self, variable, n_decades: int):
+        self._var = variable
+        self._n = n_decades
+        self._cache: dict = {}
+
+    def __len__(self) -> int:
+        return self._n
+
+    def __getitem__(self, index: int):
+        if index not in self._cache:
+            # float32 keeps memory (and masked-array promotion) in check;
+            # netCDF4 reads only the requested decade slice from disk.
+            self._cache[index] = self._var[index].astype(np.float32)
+        return self._cache[index]
+
+
+class _LazySpiStat:
+    """Lazy, dict-like access to one decadal SPI statistic.
+
+    Maps ``decade_start_year -> 2-D float32 array`` but only reads a decade's
+    file the first time that year is requested. Implements just the mapping
+    operations the app uses: truthiness, ``in``, ``keys()`` and indexing.
+    """
+
+    def __init__(self, files: dict):
+        self._files = dict(files)
+        self._cache: dict = {}
+
+    def __bool__(self) -> bool:
+        return bool(self._files)
+
+    def __contains__(self, year: int) -> bool:
+        return year in self._files
+
+    def keys(self):
+        return self._files.keys()
+
+    def __getitem__(self, year: int):
+        if year not in self._cache:
+            with nc.Dataset(self._files[year]) as ds:
+                self._cache[year] = np.ma.filled(
+                    ds.variables["SXI_P"][0].astype(np.float32), np.nan
+                )
+        return self._cache[year]
+
 # Load decadal data files
 decadal_means_clm5_files = sorted(
     glob.glob(str(data_dir / "decadal_SMI/CLM5/decadal_stats_*timmean.nc_classic.nc"))
@@ -36,9 +91,15 @@ for file in decadal_means_clm5_files:
 clm5_ds = nc.MFDataset(decadal_means_clm5_files)
 mhm_ds = nc.MFDataset(decadal_means_mhm_files)
 
-# Load full arrays (time, lat, lon)
-CLM5_smi_full = clm5_ds.variables["SMI"][:]
-mHM_smi_full = mhm_ds.variables["SMI"][:]
+# Lazily-loaded per-decade views (float32). The app only ever displays one
+# decade at a time, so reading every decade up front just wastes memory and
+# start-up time.
+CLM5_smi_full = _LazyDecadeStack(
+    clm5_ds.variables["SMI"], len(decadal_means_clm5_files)
+)
+mHM_smi_full = _LazyDecadeStack(
+    mhm_ds.variables["SMI"], len(decadal_means_mhm_files)
+)
 
 # Extract coordinates (try different variable names)
 if "lon" in clm5_ds.variables:
@@ -57,36 +118,50 @@ else:
 decade_to_index = {year: idx for idx, year in enumerate(decade_years)}
 
 # ── Streamflow / discharge data ───────────────────────────────────────────────
+# Loaded only when present. When the discharge dataset has not been synced yet
+# the app degrades gracefully: an empty gauge map and no time series, instead
+# of failing to import.
 
 _streamflow_dir = data_dir / "streamflow"
+_discharge_path = _streamflow_dir / "discharge.nc"
+_gauge_csv_path = _streamflow_dir / "grdc_iriscc_subset_lite.csv"
 
-# Gauge metadata (all stations in the CSV)
-_gauge_meta_raw = pd.read_csv(_streamflow_dir / "grdc_iriscc_subset_lite.csv")
-
-# Open discharge NetCDF – kept open for the app lifetime; variables load lazily
-_discharge_ds = nc.Dataset(_streamflow_dir / "discharge.nc")
-
-# Set of gauge IDs present in the NC file (zero-padded 10-digit strings)
-_nc_gauge_ids = frozenset(
-    v[5:] for v in _discharge_ds.variables if v.startswith("Qobs_")
-)
-
-# Filter metadata to gauges that have NC data and valid coordinates
-gauge_meta = _gauge_meta_raw.assign(
-    gauge_id=_gauge_meta_raw["grdc_no"].astype(str).str.zfill(10)
-)
-gauge_meta = (
-    gauge_meta[gauge_meta["gauge_id"].isin(list(_nc_gauge_ids))]
-    .dropna(subset=["lat", "long"])  # type: ignore[call-overload]
-    .reset_index(drop=True)
-)
-
-# Precompute daily time axis: hours since 1950-01-01 → pandas DatetimeIndex
 _base_dt = datetime(1950, 1, 1)
-_time_hours = _discharge_ds.variables["time"][:]
-discharge_time = pd.DatetimeIndex(
-    [_base_dt + timedelta(hours=int(h)) for h in _time_hours]
+
+# Defaults used when the dataset is absent.
+_discharge_ds = None
+discharge_time = pd.DatetimeIndex([])
+gauge_meta = pd.DataFrame(
+    columns=["gauge_id", "lat", "long", "station", "river", "country"]
 )
+
+if _discharge_path.exists() and _gauge_csv_path.exists():
+    # Gauge metadata (all stations in the CSV)
+    _gauge_meta_raw = pd.read_csv(_gauge_csv_path)
+
+    # Open discharge NetCDF – kept open for the app lifetime; vars load lazily
+    _discharge_ds = nc.Dataset(_discharge_path)
+
+    # Set of gauge IDs present in the NC file (zero-padded 10-digit strings)
+    _nc_gauge_ids = frozenset(
+        v[5:] for v in _discharge_ds.variables if v.startswith("Qobs_")
+    )
+
+    # Filter metadata to gauges that have NC data and valid coordinates
+    gauge_meta = _gauge_meta_raw.assign(
+        gauge_id=_gauge_meta_raw["grdc_no"].astype(str).str.zfill(10)
+    )
+    gauge_meta = (
+        gauge_meta[gauge_meta["gauge_id"].isin(list(_nc_gauge_ids))]
+        .dropna(subset=["lat", "long"])  # type: ignore[call-overload]
+        .reset_index(drop=True)
+    )
+
+    # Precompute daily time axis: hours since 1950-01-01 → pandas DatetimeIndex
+    _time_hours = _discharge_ds.variables["time"][:]
+    discharge_time = pd.DatetimeIndex(
+        [_base_dt + timedelta(hours=int(h)) for h in _time_hours]
+    )
 
 
 def get_gauge_discharge(gauge_id: str):
@@ -94,8 +169,11 @@ def get_gauge_discharge(gauge_id: str):
 
     gauge_id must be a zero-padded 10-digit string (e.g. '0006112080').
     Masked / fill values are replaced with NaN.
-    Returns (None, None) when the gauge is absent from the dataset.
+    Returns (None, None) when the gauge is absent, or when the discharge
+    dataset has not been synced yet.
     """
+    if _discharge_ds is None:
+        return None, None
     qobs_var = _discharge_ds.variables.get(f"Qobs_{gauge_id}")
     qsim_var = _discharge_ds.variables.get(f"Qsim_{gauge_id}")
     if qobs_var is None and qsim_var is None:
@@ -270,68 +348,51 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
 gauge_map_html = _build_gauge_map_html(gauge_meta)
 
 # ── SPI (Standardized Precipitation Index) decadal data ──────────────────────
+# All SPI data is loaded lazily (see _LazySpiStat): only the file paths are
+# discovered at import time, and each decade's grid is read on first access.
+# If the SPI dataset has not been added yet, the app degrades gracefully — the
+# meteorological maps show an "not available" message instead of crashing.
 
-_spi_files = sorted(glob.glob(str(data_dir / "decadal_SXI_P/SXI_P_*_timmean.nc")))
+_spi_dir = data_dir / "decadal_SXI_P"
 
-if len(_spi_files) == 0:
-    raise FileNotFoundError("No SXI_P timmean files found in data/decadal_SXI_P/.")
-
-# Decade start years extracted from filenames (e.g. SXI_P_92D_1960_1969_timmean.nc)
-_spi_decade_years = []
-for _f in _spi_files:
+# Decade-mean files, e.g. SXI_P_92D_1960_1969_timmean.nc → {1960: path, ...}
+_spi_mean_files: dict = {}
+for _f in sorted(glob.glob(str(_spi_dir / "SXI_P_*_timmean.nc"))):
     _m = re.search(r"(\d{4})_(\d{4})", _f)
     if _m:
-        _spi_decade_years.append(int(_m.group(1)))
-
-# 2-D lat/lon (curvilinear) – identical across all files, load once
-with nc.Dataset(_spi_files[0]) as _ds:
-    SPI_lat = np.ma.filled(_ds.variables["lat"][:].astype(float), np.nan)
-    SPI_lon = np.ma.filled(_ds.variables["lon"][:].astype(float), np.nan)
-
-# Stack all decades: shape (n_decades, lat, lon)
-_spi_arrays = []
-for _f in _spi_files:
-    with nc.Dataset(_f) as _ds:
-        _spi_arrays.append(
-            np.ma.filled(_ds.variables["SXI_P"][0].astype(float), np.nan)
-        )
-SPI_full = np.array(_spi_arrays)  # (n_decades, 1544, 1592)
-
-spi_decade_to_index = {year: idx for idx, year in enumerate(_spi_decade_years)}
+        _spi_mean_files[int(_m.group(1))] = _f
 
 
-# ── SPI decadal statistics (frequency, peak severity, spell length) ──────────
-# Files produced by data/processing/decadal_statistics.sh, one per decade:
-#   SXI_P_92D_<year>_dfreq.nc     fraction of time in drought (0..1)
-#   SXI_P_92D_<year>_min.nc       most negative SPI reached (peak severity)
-#   SXI_P_92D_<year>_maxspell.nc  longest consecutive dry spell (days)
+def _discover_spi_stat_files(suffix: str) -> dict:
+    """Map decade start year → file path for a decadal SPI statistic.
 
-
-def _load_spi_stat(suffix: str) -> dict:
-    """Load decadal SPI statistic files for a given suffix.
-
-    Returns a mapping {decade_start_year: 2-D numpy array}. Missing/masked
-    cells are filled with NaN. Returns an empty dict if no files are present
-    (so the app degrades gracefully when a statistic has not been computed).
+    Files are produced by data/processing/decadal_statistics.sh, one per decade:
+      SXI_P_92D_<year>_dfreq.nc     fraction of time in drought (0..1)
+      SXI_P_92D_<year>_min.nc       most negative SPI reached (peak severity)
+      SXI_P_92D_<year>_maxspell.nc  longest consecutive dry spell (days)
     """
-    pattern = str(data_dir / f"decadal_SXI_P/SXI_P_92D_*_{suffix}.nc")
     out: dict = {}
-    for _f in sorted(glob.glob(pattern)):
+    for _f in sorted(glob.glob(str(_spi_dir / f"SXI_P_92D_*_{suffix}.nc"))):
         _m = re.search(rf"SXI_P_92D_(\d{{4}})_{suffix}\.nc$", _f)
-        if not _m:
-            continue
-        with nc.Dataset(_f) as _ds:
-            out[int(_m.group(1))] = np.ma.filled(
-                _ds.variables["SXI_P"][0].astype(float), np.nan
-            )
+        if _m:
+            out[int(_m.group(1))] = _f
     return out
 
 
-# Per-statistic decadal data keyed by statistic name, then decade start year.
-# "mean" reuses the existing timmean stack for a uniform lookup API.
+# 2-D lat/lon (curvilinear) – identical across all decades, loaded once if the
+# dataset is present. None when SPI data has not been added.
+SPI_lat = None
+SPI_lon = None
+if _spi_mean_files:
+    with nc.Dataset(_spi_mean_files[min(_spi_mean_files)]) as _ds:
+        SPI_lat = np.ma.filled(_ds.variables["lat"][:].astype(np.float32), np.nan)
+        SPI_lon = np.ma.filled(_ds.variables["lon"][:].astype(np.float32), np.nan)
+
+# Per-statistic decadal data keyed by statistic name; each value is a lazy,
+# dict-like mapping of decade start year → 2-D field, read on first access.
 SPI_STAT_DATA: dict = {
-    "mean": {year: SPI_full[idx] for year, idx in spi_decade_to_index.items()},
-    "dfreq": _load_spi_stat("dfreq"),
-    "min": _load_spi_stat("min"),
-    "maxspell": _load_spi_stat("maxspell"),
+    "mean": _LazySpiStat(_spi_mean_files),
+    "dfreq": _LazySpiStat(_discover_spi_stat_files("dfreq")),
+    "min": _LazySpiStat(_discover_spi_stat_files("min")),
+    "maxspell": _LazySpiStat(_discover_spi_stat_files("maxspell")),
 }

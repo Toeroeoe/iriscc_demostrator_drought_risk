@@ -36,24 +36,28 @@ LIGHT_THEME = theme.flatly
 
 # Font registration
 def _register_custom_fonts():
-    """Register custom fonts with matplotlib font manager."""
-    # Get path to fonts directory (relative to this file)
+    """Register only the font weights matplotlib actually uses.
+
+    matplotlib re-parses every file handed to ``addfont()``, so registering a
+    whole family (dozens of weights/styles, plus variable and web formats)
+    noticeably slows process start-up. The plots only ever render Regular and
+    Bold weights, so we register just those. The web UI gets its fonts from
+    Google Fonts (see ``GOOGLE_FONTS_URL``); the remaining files under
+    ``fonts/`` are not needed by matplotlib.
+    """
     fonts_dir = Path(__file__).parent.parent.parent / 'fonts'
-    
-    # Register Inter fonts (OTF and TTF)
-    inter_dir = fonts_dir / 'Inter'
-    for font_file in list(inter_dir.glob('*.ttf')) + list(inter_dir.glob('*.otf')):
-        fm.fontManager.addfont(str(font_file))
-    
-    # Register Crimson Text fonts
-    crimson_dir = fonts_dir / 'CrimsonText'
-    for font_file in crimson_dir.glob('*.ttf'):
-        fm.fontManager.addfont(str(font_file))
-    
-    # Register IBM Plex Mono fonts
-    ibm_dir = fonts_dir / 'IBMPlexMono'
-    for font_file in ibm_dir.glob('*.ttf'):
-        fm.fontManager.addfont(str(font_file))
+
+    font_files = [
+        fonts_dir / 'Inter' / 'Inter-Regular.otf',
+        fonts_dir / 'Inter' / 'Inter-Bold.otf',
+        fonts_dir / 'CrimsonText' / 'CrimsonText-Regular.ttf',
+        fonts_dir / 'CrimsonText' / 'CrimsonText-Bold.ttf',
+        fonts_dir / 'IBMPlexMono' / 'IBMPlexMono-Regular.ttf',
+        fonts_dir / 'IBMPlexMono' / 'IBMPlexMono-Medium.ttf',
+    ]
+    for font_file in font_files:
+        if font_file.exists():
+            fm.fontManager.addfont(str(font_file))
 
 # Register fonts on module import
 _register_custom_fonts()
@@ -248,6 +252,18 @@ class ThemeConfig:
             return self.palette
 
 
+# Build the theme configurations once per process and reuse them everywhere.
+# ThemeConfig is effectively immutable after construction, so sharing a single
+# instance avoids repeating the theme extraction / rcParams work on every plot
+# render.
+DARK_CONFIG = ThemeConfig('dark')
+LIGHT_CONFIG = ThemeConfig('light')
+
+
 def get_theme_config(theme_mode: Literal['dark', 'light'] = 'light') -> ThemeConfig:
-    """Factory function to get theme configuration."""
-    return ThemeConfig(theme_mode)
+    """Return the shared ThemeConfig for the given mode.
+
+    The instances are created once at import time and reused, so repeated calls
+    (e.g. on every plot render) are essentially free.
+    """
+    return DARK_CONFIG if theme_mode == 'dark' else LIGHT_CONFIG

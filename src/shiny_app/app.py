@@ -313,6 +313,14 @@ page_model_evaluation = ui.page_fluid(
 
 app_ui = ui.page_fluid(
     ui.head_content(
+        # Warm up the Google Fonts connection before the stylesheet request so
+        # web-UI fonts arrive sooner (matplotlib uses the bundled fonts).
+        ui.tags.link(rel="preconnect", href="https://fonts.googleapis.com"),
+        ui.tags.link(
+            rel="preconnect",
+            href="https://fonts.gstatic.com",
+            crossorigin="anonymous",
+        ),
         ui.tags.link(rel="stylesheet", href=GOOGLE_FONTS_URL),
         # Leaflet – loaded in the head so the map script in the Hydrological
         # tab can reference L.* as soon as it runs.
