@@ -377,7 +377,7 @@ app_ui = ui.page_fluid(
     ),
     ui.layout_columns(
         ui.h1(
-            "Risk on terrestrial ecosystems functioning to droughts and heatwaves",
+            "Risk on terrestrial ecosystems functioning to droughts",
             style="text-align: center;",
         ),
         ui.output_image("iriscc_logo_title", inline=True),
