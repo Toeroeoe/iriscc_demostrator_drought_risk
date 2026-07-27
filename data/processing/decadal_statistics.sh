@@ -1,10 +1,10 @@
 
-ifile=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SXI_DETECT/SXI_92D.nc
-odir=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SXI_DETECT/decadal/
-var=SXI_P
-oprefix=${var}_92D_
+ifile=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/CLM5_SMI_reference_1960_1999.nc
+odir=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/decadal/
+var=SMI
+oprefix=${var}_CLM5_
 dec1=1960
-dec2=2010
+dec2=1990
 thresh=-1
 tstep=8
 

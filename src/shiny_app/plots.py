@@ -112,9 +112,11 @@ class demo_fig:
     fy: float = 6.7
     fx: float = 4
 
-    fs_title: int = 10
-
     projection: None | ccrs.Projection = None
+
+    # Point size for map/plot titles (suptitle is this + 2). Shiny renders the
+    # figure at its own dpi, so on-screen text height ≈ point_size * dpi / 72.
+    fs_title: int = 16
 
     def __post_init__(self):
 
@@ -184,7 +186,7 @@ class demo_fig:
             fontfamily=self.theme_config.get_font_family(
                 "heading"
             ),  # Elegant serif for titles
-            fontweight=300,  # Match Shiny CSS font-weight: 400 (normal)
+            fontweight=400,  # Match Shiny CSS font-weight: 400 (normal)
             color=self.theme_config.colors["text"],  # Use theme text color
         )
         self.ax2.set_title(
@@ -194,7 +196,7 @@ class demo_fig:
             fontfamily=self.theme_config.get_font_family(
                 "heading"
             ),  # Elegant serif for titles
-            fontweight=300,  # Match Shiny CSS font-weight: 400 (normal)
+            fontweight=400,  # Match Shiny CSS font-weight: 400 (normal)
             color=self.theme_config.colors["text"],  # Use theme text color
         )
         # Apply text color to axis tick labels
@@ -227,7 +229,8 @@ class EU1_map(demo_fig):
     grid_lw: float = 0.8
     grid_color: str = "grey"
     grid_linestyle: str = "--"
-    fs_map_label: int = 4
+    # Point size for gridline labels, colorbar label and colorbar ticks.
+    fs_map_label: int = 12
     cbar_width_ratio: float = 0.05
     pcolormesh_obj: Optional[object] = field(default=None, init=False, repr=False)
 
@@ -421,7 +424,8 @@ class EU3_map(demo_fig):
     grid_color: str = "grey"
     grid_linestyle: str = "--"
 
-    fs_map_label: int = 4
+    # Point size for gridline labels, colorbar label and colorbar ticks.
+    fs_map_label: int = 12
 
     # For efficient pcolormesh updates
     pcolormesh_obj: Optional[object] = field(default=None, init=False, repr=False)
