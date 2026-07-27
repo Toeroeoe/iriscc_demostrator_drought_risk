@@ -1,5 +1,5 @@
 
-ifile=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/CLM5_SMI_reference_1960_1999.nc
+ifile=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/mHM_SMI_reference_1960_1999.nc
 odir=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/decadal/
 var=SMI
 oprefix=${var}_CLM5_
