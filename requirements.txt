@@ -10,5 +10,5 @@ shiny==1.5.0
 shinyswatch==0.9.0
 seaborn==0.13.2
 ipyleaflet==0.20.0
-cartopy==0.25.0
+cartopy==0.23.0
 xarray==2026.7.0
