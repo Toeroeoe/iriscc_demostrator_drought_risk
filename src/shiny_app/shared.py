@@ -353,7 +353,7 @@ gauge_map_html = _build_gauge_map_html(gauge_meta)
 # If the SPI dataset has not been added yet, the app degrades gracefully — the
 # meteorological maps show an "not available" message instead of crashing.
 
-_spi_dir = data_dir / "decadal_SXI_P"
+_spi_dir = data_dir / "decadal_SPI"
 
 # Decade-mean files, e.g. SXI_P_92D_1960_1969_timmean.nc → {1960: path, ...}
 _spi_mean_files: dict = {}
