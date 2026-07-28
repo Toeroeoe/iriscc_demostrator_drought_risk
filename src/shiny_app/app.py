@@ -8,18 +8,17 @@ from datetime import date, timedelta
 
 import matplotlib.pyplot as plt
 from shared import (
-    CLM5_smi_full,
+    SMI_lat,
+    SMI_lon,
+    SMI_STAT_DATA,
     SPI_lat,
     SPI_lon,
     SPI_STAT_DATA,
-    decade_to_index,
     discharge_time,
     gauge_map_html,
     gauge_meta,
     get_gauge_discharge,
     images,
-    lat,
-    lon,
 )
 from shiny import App, render, ui
 from shiny.types import ImgData
@@ -94,6 +93,48 @@ SPI_STATISTICS = {
             "the length of the longest uninterrupted period with the 92-day SPI "
             "at or below \u22121; longer spells indicate more persistent drought"
         ),
+    },
+}
+
+# Per-statistic plotting configuration for the agricultural (SMI) maps.
+# SMI is a 0..1 soil-moisture index (0 = driest). Two hydrological models
+# (CLM5, mHM) are shown side by side, so there is no atmospheric-forcing choice.
+SMI_STATISTICS = {
+    "mean": {
+        "label": "Mean index",
+        "cmap": "inferno_r",
+        "vmin": 0.3,
+        "vmax": 0.6,
+        "extend": "both",
+        "scale": 1.0,
+        "cbar_label": "Mean SMI (dimensionless)",
+    },
+    "dfreq": {
+        "label": "Drought frequency",
+        "cmap": "YlOrRd",
+        "vmin": 0.0,
+        "vmax": 40.0,
+        "extend": "max",
+        "scale": 100.0,
+        "cbar_label": "Time in drought (%)",
+    },
+    "min": {
+        "label": "Peak severity",
+        "cmap": "YlOrRd_r",
+        "vmin": 0.0,
+        "vmax": 0.3,
+        "extend": "max",
+        "scale": 1.0,
+        "cbar_label": "Minimum SMI reached",
+    },
+    "maxspell": {
+        "label": "Longest dry spell",
+        "cmap": "YlOrRd",
+        "vmin": 0.0,
+        "vmax": 200.0,
+        "extend": "max",
+        "scale": 1.0,
+        "cbar_label": "Longest spell (days)",
     },
 }
 
@@ -564,46 +605,32 @@ def server(input, output, session) -> None:
     @render.plot
     def render_eu3_map():
         from plots import EU3_map
-        from shared import mHM_smi_full
 
-        # Soil-moisture (SMI) currently only has the decadal mean precomputed;
-        # the other statistics exist for the meteorological (SPI) index only.
-        if input.statistic() != "mean":
+        stat_key = input.statistic()
+        stat = SMI_STATISTICS.get(stat_key, SMI_STATISTICS["mean"])
+        decade_year = input.dec().year
+
+        clm5_stat = SMI_STAT_DATA["CLM5"].get(stat_key)
+        mhm_stat = SMI_STAT_DATA["mHM"].get(stat_key)
+        if not clm5_stat or not mhm_stat:
             return _message_fig(
-                "Only the decadal mean is currently available for soil "
-                "moisture (SMI).\nSelect \u201cMean index\u201d, or open the "
-                "Meteorological tab for other statistics."
+                f'The “{stat["label"]}” statistic is not available for soil '
+                "moisture (SMI)."
             )
 
-        # Get selected decade from the "dec" slider input
-        selected_date = input.dec()
-        decade_year = selected_date.year
+        # Fall back to the earliest available decade if this one is missing.
+        if decade_year not in clm5_stat:
+            decade_year = min(clm5_stat.keys())
 
-        # Get the index for this decade from the mapping
-        time_index = decade_to_index.get(decade_year)
-
-        if time_index is None:
-            # Fallback to first available decade if not found
-            decade_year = min(decade_to_index.keys())
-            time_index = decade_to_index[decade_year]
-
-        # Extract the 2D arrays for this decade (already pre-loaded in memory)
-        clm5_smi_data = CLM5_smi_full[time_index]
-        mhm_smi_data = mHM_smi_full[time_index]
-
-        # Squeeze data if it has extra dimensions
-        if len(clm5_smi_data.shape) > 2:
-            clm5_smi_data = clm5_smi_data.squeeze()
-        if len(mhm_smi_data.shape) > 2:
-            mhm_smi_data = mhm_smi_data.squeeze()
-
-        vmin = 0.3
-        vmax = 0.6
-        cmap = "inferno_r"
+        clm5_smi_data = clm5_stat[decade_year] * stat["scale"]
+        mhm_smi_data = mhm_stat[decade_year] * stat["scale"]
 
         # Create fresh map instance (required by Shiny's matplotlib backend)
         eu_map_instance = EU3_map(
-            suptitle=f"Soil moisture index (SMI) for decade {decade_year}-{decade_year + 9}",
+            suptitle=(
+                f"Soil moisture (SMI) — {stat['label'].lower()}, "
+                f"{decade_year}–{decade_year + 9}"
+            ),
             title=["CLM5", "mHM"],
             description="",
             color_mode="dark",
@@ -611,37 +638,32 @@ def server(input, output, session) -> None:
         )
         fig, _, axs = eu_map_instance.create()
 
-        # Add data to both plots with same scale
-        if lon is not None and lat is not None:
-            # Plot CLM5 on left axis
+        # Add data to both plots with the same scale
+        if SMI_lon is not None and SMI_lat is not None:
             eu_map_instance.pcolormesh(
-                lon,
-                lat,
+                SMI_lon,
+                SMI_lat,
                 clm5_smi_data,
                 ax_num=0,
-                cmap=cmap,
-                vmin=vmin,
-                vmax=vmax,
+                cmap=stat["cmap"],
+                vmin=stat["vmin"],
+                vmax=stat["vmax"],
                 alpha=0.8,
             )
-
-            # Plot mHM on right axis
             eu_map_instance.pcolormesh(
-                lon,
-                lat,
+                SMI_lon,
+                SMI_lat,
                 mhm_smi_data,
                 ax_num=1,
-                cmap=cmap,
-                vmin=vmin,
-                vmax=vmax,
+                cmap=stat["cmap"],
+                vmin=stat["vmin"],
+                vmax=stat["vmax"],
                 alpha=0.8,
             )
-
-            # Add colorbar on the right of both plots
             eu_map_instance.colorbar(
                 eu_map_instance.pcolormesh_obj,
-                cbar_label="Soil Moisture Index",
-                extend="both",
+                cbar_label=stat["cbar_label"],
+                extend=stat["extend"],
             )
 
         return fig

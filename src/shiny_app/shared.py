@@ -13,41 +13,17 @@ data_dir = Path(__file__).parent.parent.parent / "data"
 images = Path(__file__).parent.parent.parent / "images"
 
 
-class _LazyDecadeStack:
-    """Indexable, lazily-loaded view over a NetCDF variable's decade axis.
-
-    ``stack[i]`` reads and returns only decade ``i`` (as float32) rather than
-    pulling every decade into memory at import time. Slices are cached, so
-    repeated views of the same decade are free. Only the ndarray operations the
-    app relies on are implemented: integer indexing and ``len()``.
-    """
-
-    def __init__(self, variable, n_decades: int):
-        self._var = variable
-        self._n = n_decades
-        self._cache: dict = {}
-
-    def __len__(self) -> int:
-        return self._n
-
-    def __getitem__(self, index: int):
-        if index not in self._cache:
-            # float32 keeps memory (and masked-array promotion) in check;
-            # netCDF4 reads only the requested decade slice from disk.
-            self._cache[index] = self._var[index].astype(np.float32)
-        return self._cache[index]
-
-
-class _LazySpiStat:
-    """Lazy, dict-like access to one decadal SPI statistic.
+class _LazyStatFiles:
+    """Lazy, dict-like access to one decadal statistic stored as per-decade files.
 
     Maps ``decade_start_year -> 2-D float32 array`` but only reads a decade's
     file the first time that year is requested. Implements just the mapping
     operations the app uses: truthiness, ``in``, ``keys()`` and indexing.
     """
 
-    def __init__(self, files: dict):
+    def __init__(self, files: dict, varname: str):
         self._files = dict(files)
+        self._var = varname
         self._cache: dict = {}
 
     def __bool__(self) -> bool:
@@ -63,59 +39,56 @@ class _LazySpiStat:
         if year not in self._cache:
             with nc.Dataset(self._files[year]) as ds:
                 self._cache[year] = np.ma.filled(
-                    ds.variables["SXI_P"][0].astype(np.float32), np.nan
+                    ds.variables[self._var][0].astype(np.float32), np.nan
                 )
         return self._cache[year]
 
-# Load decadal data files
-decadal_means_clm5_files = sorted(
-    glob.glob(str(data_dir / "decadal_SMI/CLM5/decadal_stats_*timmean.nc_classic.nc"))
-)
-decadal_means_mhm_files = sorted(
-    glob.glob(str(data_dir / "decadal_SMI/mHM/decadal_stats_*timmean.nc.nc_classic.nc"))
-)
 
-if len(decadal_means_clm5_files) == 0 or len(decadal_means_mhm_files) == 0:
-    raise FileNotFoundError("No decadal means files found in the data directory.")
-elif len(decadal_means_clm5_files) != len(decadal_means_mhm_files):
-    raise ValueError("The number of CLM5 and mHM decadal means files do not match.")
+# ── Agricultural (SMI) decadal data ─────────────────────────────────────────
+# Files: data/decadal_SMI/<model>/<model><decade>_<stat>.nc  (variable "SMI"),
+# e.g. CLM5/CLM51960_dfreq.nc. Two hydrological models (CLM5, mHM) are shown
+# side by side; each statistic/decade is loaded lazily on first access.
 
-# Extract decade years from filenames
-decade_years = []
-for file in decadal_means_clm5_files:
-    match = re.search(r"(\d{4})_(\d{4})", file)
-    if match:
-        decade_years.append(int(match.group(1)))
+_smi_dir = data_dir / "decadal_SMI"
+SMI_MODELS = ("CLM5", "mHM")
+SMI_STATS = ("mean", "dfreq", "min", "maxspell")
 
-# Load complete datasets with MFDataset
-clm5_ds = nc.MFDataset(decadal_means_clm5_files)
-mhm_ds = nc.MFDataset(decadal_means_mhm_files)
 
-# Lazily-loaded per-decade views (float32). The app only ever displays one
-# decade at a time, so reading every decade up front just wastes memory and
-# start-up time.
-CLM5_smi_full = _LazyDecadeStack(
-    clm5_ds.variables["SMI"], len(decadal_means_clm5_files)
-)
-mHM_smi_full = _LazyDecadeStack(
-    mhm_ds.variables["SMI"], len(decadal_means_mhm_files)
-)
+def _discover_smi_files(model: str, stat: str) -> dict:
+    """Map decade start year → file path for a given SMI model and statistic."""
+    out: dict = {}
+    for _f in sorted(glob.glob(str(_smi_dir / model / f"{model}*_{stat}.nc"))):
+        _m = re.search(rf"{model}(\d{{4}})_{stat}\.nc$", _f)
+        if _m:
+            out[int(_m.group(1))] = _f
+    return out
 
-# Extract coordinates (try different variable names)
-if "lon" in clm5_ds.variables:
-    lon = clm5_ds.variables["lon"][:]
-    lat = clm5_ds.variables["lat"][:]
-elif "rlon" in clm5_ds.variables:
-    lon = clm5_ds.variables["rlon"][:]
-    lat = clm5_ds.variables["rlat"][:]
-else:
-    coord_vars = list(clm5_ds.variables.keys())
-    raise ValueError(
-        f"Could not find lat/lon or rlon/rlat in dataset. Available: {coord_vars}"
-    )
 
-# Create mapping from decade year to array index
-decade_to_index = {year: idx for idx, year in enumerate(decade_years)}
+_smi_files = {
+    model: {stat: _discover_smi_files(model, stat) for stat in SMI_STATS}
+    for model in SMI_MODELS
+}
+
+# Per-model, per-statistic lazy data: SMI_STAT_DATA[model][stat][decade_year].
+SMI_STAT_DATA = {
+    model: {
+        stat: _LazyStatFiles(_smi_files[model][stat], "SMI") for stat in SMI_STATS
+    }
+    for model in SMI_MODELS
+}
+
+# 1-D lat/lon (regular grid) – identical across files, loaded once if present.
+# None when the SMI dataset has not been synced yet (app degrades gracefully).
+SMI_lat = None
+SMI_lon = None
+_clm5_mean_files = _smi_files["CLM5"]["mean"]
+if _clm5_mean_files:
+    with nc.Dataset(_clm5_mean_files[min(_clm5_mean_files)]) as _ds:
+        SMI_lat = _ds.variables["lat"][:].astype(np.float32)
+        SMI_lon = _ds.variables["lon"][:].astype(np.float32)
+
+# Decade start years available for SMI (from the CLM5 mean files).
+smi_decade_years = sorted(_clm5_mean_files.keys())
 
 # ── Streamflow / discharge data ───────────────────────────────────────────────
 # Loaded only when present. When the discharge dataset has not been synced yet
@@ -348,7 +321,7 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
 gauge_map_html = _build_gauge_map_html(gauge_meta)
 
 # ── SPI (Standardized Precipitation Index) decadal data ──────────────────────
-# All SPI data is loaded lazily (see _LazySpiStat): only the file paths are
+# All SPI data is loaded lazily (see _LazyStatFiles): only the file paths are
 # discovered at import time, and each decade's grid is read on first access.
 # If the SPI dataset has not been added yet, the app degrades gracefully — the
 # meteorological maps show an "not available" message instead of crashing.
@@ -391,8 +364,8 @@ if _spi_mean_files:
 # Per-statistic decadal data keyed by statistic name; each value is a lazy,
 # dict-like mapping of decade start year → 2-D field, read on first access.
 SPI_STAT_DATA: dict = {
-    "mean": _LazySpiStat(_spi_mean_files),
-    "dfreq": _LazySpiStat(_discover_spi_stat_files("dfreq")),
-    "min": _LazySpiStat(_discover_spi_stat_files("min")),
-    "maxspell": _LazySpiStat(_discover_spi_stat_files("maxspell")),
+    "mean": _LazyStatFiles(_spi_mean_files, "SXI_P"),
+    "dfreq": _LazyStatFiles(_discover_spi_stat_files("dfreq"), "SXI_P"),
+    "min": _LazyStatFiles(_discover_spi_stat_files("min"), "SXI_P"),
+    "maxspell": _LazyStatFiles(_discover_spi_stat_files("maxspell"), "SXI_P"),
 }
