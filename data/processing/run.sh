@@ -12,7 +12,7 @@
 set -euo pipefail
 source ../../.venv/bin/activate
 
-model=CLM5
+model=mHM
 
 # ── Agricultural drought: SMI (no temporal aggregation -> no --agg) ──────────
 SMI_IFILE=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/${model}_SMI_application_2000_2024.nc
