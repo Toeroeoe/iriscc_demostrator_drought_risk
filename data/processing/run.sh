@@ -12,27 +12,31 @@
 set -euo pipefail
 source ../../.venv/bin/activate
 
+model=CLM5
+
 # ── Agricultural drought: SMI (no temporal aggregation -> no --agg) ──────────
-SMI_IFILE=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/CLM5_SMI_reference_1960_1999.nc
+SMI_IFILE=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/${model}_SMI_application_2000_2024.nc
 SMI_ODIR=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/decadal/
 
 for thresh in 0.05 0.1 0.2 0.3 ; do
-  echo "SMI (CLM5), thresh=${thresh}"
+  echo "SMI (${model}), thresh=${thresh}"
   python decadal_statistics.py \
     --ifile "${SMI_IFILE}" \
     --odir  "${SMI_ODIR}" \
     --var SMI \
-    --prefix CLM5 \
-    --dec1 1960 --dec2 1990 \
+    --prefix "${model}" \
+    --dec1 2000 --dec2 2010 \
     --thresh "${thresh}"
   # -> CLM5_0.2_1960_mean.nc, CLM5_0.2_1960_dfreq.nc, ...  (no agg token)
 done
+
+exit
 
 # ── Meteorological drought: SPI over a 92-day window (--agg 92D) ─────────────
 SPI_IFILE=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SXI_DETECT/SXI_92D.nc
 SPI_ODIR=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SXI_DETECT/decadal/
 
-for thresh in -1 -1.5 -2 -3 ; do
+for thresh in -1.0 -1.5 -2.0 -3.0 ; do
   echo "SPI (SXI_P, 92D), thresh=${thresh}"
   python decadal_statistics.py \
     --ifile "${SPI_IFILE}" \
