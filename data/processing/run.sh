@@ -15,7 +15,7 @@ source ../../.venv/bin/activate
 model=mHM
 
 # ── Agricultural drought: SMI (no temporal aggregation -> no --agg) ──────────
-SMI_IFILE=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/${model}_SMI_application_2000_2024.nc
+SMI_IFILE=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/${model}_SMI_reference_1960_1999.nc
 SMI_ODIR=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/decadal/
 
 for thresh in 0.2 0.3 ; do
@@ -25,7 +25,7 @@ for thresh in 0.2 0.3 ; do
     --odir  "${SMI_ODIR}" \
     --var SMI \
     --prefix "${model}" \
-    --dec1 2000 --dec2 2010 \
+    --dec1 1960 --dec2 1990 \
     --thresh "${thresh}"
   # -> CLM5_0.2_1960_mean.nc, CLM5_0.2_1960_dfreq.nc, ...  (no agg token)
 done
