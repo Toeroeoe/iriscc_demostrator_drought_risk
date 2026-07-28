@@ -3,15 +3,24 @@
 
 Python port of ``decadal_statistics.sh``, generalised to give *consistent*
 results across datasets with different temporal sampling (daily, n-daily,
-monthly). For each decade it writes three fields, one file each:
+monthly). For each decade it writes four fields, one file each. The threshold
+(and, optionally, the temporal-aggregation label) are encoded in the file name
+so several runs can coexist (and be selected from in the app):
 
-    <prefix><decade>_dfreq.nc     fraction of time in drought (0..1)
-    <prefix><decade>_min.nc       most negative index reached (peak severity)
-    <prefix><decade>_maxspell.nc  longest consecutive dry spell, in DAYS
+    <prefix>[_<agg>]_<thresh>_<decade>_mean.nc      decadal mean of the index
+    <prefix>[_<agg>]_<thresh>_<decade>_dfreq.nc     fraction of time in drought
+    <prefix>[_<agg>]_<thresh>_<decade>_min.nc       most negative index reached
+    <prefix>[_<agg>]_<thresh>_<decade>_maxspell.nc  longest dry spell (DAYS)
 
-Both the drought frequency and the spell length are weighted by each
-timestep's real duration in days, so the numbers are directly comparable no
-matter how the data is sampled:
+The aggregation label (``--agg``, e.g. ``92D``) is optional: pass it for
+indices computed over a temporal window (e.g. a 92-day SPI), and omit it for
+variables with no aggregation (e.g. SMI). ``mean`` and ``min`` do not depend on
+the threshold, so they are identical across threshold runs (they still carry
+the tag for a uniform, self-contained set of files per run).
+
+The mean, drought frequency and spell length are weighted by each timestep's
+real duration in days, so the numbers are directly comparable no matter how
+the data is sampled:
 
     daily     -> 1 day per step
     8-daily   -> 8 days per step
@@ -21,11 +30,15 @@ For equally-spaced data this weighting is a no-op, so results stay identical to
 the original shell script. Use ``--step-days N`` to force a fixed step length
 instead of deriving it from the time axis.
 
+Ocean/missing cells are kept masked (NaN) in every output, derived from the
+input's valid footprint. This avoids the CDO ``consecsum`` pitfall where the
+land-sea mask was lost and the ocean ended up drawn as 0.
+
 Requires: xarray, numpy (cftime comes with netCDF4). Example:
 
     python decadal_statistics.py \\
         --ifile /path/SXI_92D.nc --odir /path/decadal/ \\
-        --var SXI_P --prefix SXI_P_92D_ \\
+        --var SXI_P --prefix SXI_P --agg 92D \\
         --dec1 1960 --dec2 2010 --thresh -1
 """
 
@@ -120,20 +133,30 @@ def process(args: argparse.Namespace) -> None:
         weight = weights_full.sel({tdim: slice(str(y0), str(y1))})
         w = weight.values
         mask = dec <= args.thresh  # 1 where in drought (NaN -> False)
-        valid = dec.notnull().any(tdim)  # keep ocean/masked cells as NaN
+        valid = dec.notnull().any(tdim)  # land-sea mask: keep ocean as NaN
         when = dec[tdim].values[0]
+        units = dec.attrs.get("units", "")
+
+        # Filename: <prefix>[_<agg>]_<thresh>_<decade>_<stat>.nc
+        # The aggregation label (e.g. 92D) is optional - omitted for variables
+        # without a temporal aggregation (e.g. SMI). The thresh tag lets several
+        # threshold runs coexist. A trailing '_' on the prefix is tolerated.
+        parts = [args.prefix.rstrip("_")]
+        if args.agg:
+            parts.append(args.agg)
+        parts += [f"{args.thresh:g}", str(y0)]
+        stem = "_".join(parts)
+
+        print("  - decadal mean")
+        mean = dec.weighted(weight).mean(tdim, skipna=True)
+        write_field(mean.where(valid), args.var, when, units, odir / f"{stem}_mean.nc")
 
         print("  - relative drought time")
         dfreq = (mask * weight).sum(tdim) / weight.sum()
-        write_field(
-            dfreq.where(valid), args.var, when, "1", odir / f"{args.prefix}_{args.thresh}_{y0}_dfreq.nc"
-        )
+        write_field(dfreq.where(valid), args.var, when, "1", odir / f"{stem}_dfreq.nc")
 
         print("  - minimum drought index")
-        write_field(
-            dec.min(tdim), args.var, when,
-            dec.attrs.get("units", ""), odir / f"{args.prefix}_{args.thresh}_{y0}_min.nc",
-        )
+        write_field(dec.min(tdim).where(valid), args.var, when, units, odir / f"{stem}_min.nc")
 
         print("  - longest drought spell (days)")
         mask_t = mask.transpose(tdim, ...)
@@ -142,10 +165,7 @@ def process(args: argparse.Namespace) -> None:
             dims=mask_t.dims[1:],
             coords={c: dec.coords[c] for c in dec.coords if tdim not in dec[c].dims},
         )
-        write_field(
-            spell.where(valid), args.var, when, "days",
-            odir / f"{args.prefix}_{args.thresh}_{y0}_maxspell.nc",
-        )
+        write_field(spell.where(valid), args.var, when, "days", odir / f"{stem}_maxspell.nc")
 
     ds.close()
 
@@ -155,7 +175,12 @@ def main() -> None:
     p.add_argument("--ifile", required=True, help="input drought-index NetCDF")
     p.add_argument("--odir", required=True, help="output directory")
     p.add_argument("--var", default="SXI_P", help="variable name (default: SXI_P)")
-    p.add_argument("--prefix", default="SXI_P_92D_", help="output filename prefix")
+    p.add_argument("--prefix", default="SXI_P", help="output filename prefix")
+    p.add_argument(
+        "--agg", default=None,
+        help="optional temporal-aggregation label placed in the file name "
+        "(e.g. 92D); omit for non-aggregated variables such as SMI",
+    )
     p.add_argument("--time-dim", default="time", help="name of the time dimension")
     p.add_argument("--dec1", type=int, default=1960, help="first decade start year")
     p.add_argument("--dec2", type=int, default=2010, help="last decade start year")
