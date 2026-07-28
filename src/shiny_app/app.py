@@ -7,6 +7,7 @@ Returns:
 from datetime import date, timedelta
 
 import matplotlib.pyplot as plt
+import numpy as np
 from shared import (
     SMI_lat,
     SMI_lon,
@@ -137,6 +138,19 @@ SMI_STATISTICS = {
         "cbar_label": "Longest spell (days)",
     },
 }
+
+def _blank_ocean(data, mean_map, decade_year):
+    """Blank cells that are ocean/missing in the reference mean field.
+
+    Some statistic files (notably maxspell/dfreq from CDO's consecsum) store
+    ocean as 0 rather than a fill value, which would otherwise be drawn at the
+    bottom of the colour scale instead of revealing the ocean basemap. The mean
+    field is reliably masked, so we use its NaN pattern as the land-sea mask.
+    """
+    if mean_map is not None and decade_year in mean_map:
+        return np.where(np.isnan(mean_map[decade_year]), np.nan, data)
+    return data
+
 
 # The contents of the first 'page' is a navset with two 'panels'.
 page_droughts = ui.page_fluid(
@@ -537,6 +551,7 @@ def server(input, output, session) -> None:
             decade_year = min(stat_data.keys())
 
         spi_data = stat_data[decade_year] * stat["scale"]
+        spi_data = _blank_ocean(spi_data, SPI_STAT_DATA.get("mean"), decade_year)
 
         spi_map = EU1_map(
             suptitle=f"Meteorological drought \u2014 {stat['label']}",
@@ -624,6 +639,12 @@ def server(input, output, session) -> None:
 
         clm5_smi_data = clm5_stat[decade_year] * stat["scale"]
         mhm_smi_data = mhm_stat[decade_year] * stat["scale"]
+        clm5_smi_data = _blank_ocean(
+            clm5_smi_data, SMI_STAT_DATA["CLM5"].get("mean"), decade_year
+        )
+        mhm_smi_data = _blank_ocean(
+            mhm_smi_data, SMI_STAT_DATA["mHM"].get("mean"), decade_year
+        )
 
         # Create fresh map instance (required by Shiny's matplotlib backend)
         eu_map_instance = EU3_map(
