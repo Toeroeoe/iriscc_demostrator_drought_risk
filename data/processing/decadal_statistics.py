@@ -126,13 +126,13 @@ def process(args: argparse.Namespace) -> None:
         print("  - relative drought time")
         dfreq = (mask * weight).sum(tdim) / weight.sum()
         write_field(
-            dfreq.where(valid), args.var, when, "1", odir / f"{args.prefix}{y0}_dfreq.nc"
+            dfreq.where(valid), args.var, when, "1", odir / f"{args.prefix}_{args.thresh}_{y0}_dfreq.nc"
         )
 
         print("  - minimum drought index")
         write_field(
             dec.min(tdim), args.var, when,
-            dec.attrs.get("units", ""), odir / f"{args.prefix}{y0}_min.nc",
+            dec.attrs.get("units", ""), odir / f"{args.prefix}_{args.thresh}_{y0}_min.nc",
         )
 
         print("  - longest drought spell (days)")
@@ -144,7 +144,7 @@ def process(args: argparse.Namespace) -> None:
         )
         write_field(
             spell.where(valid), args.var, when, "days",
-            odir / f"{args.prefix}{y0}_maxspell.nc",
+            odir / f"{args.prefix}_{args.thresh}_{y0}_maxspell.nc",
         )
 
     ds.close()
