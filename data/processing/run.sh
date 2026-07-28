@@ -16,7 +16,7 @@ source ../../.venv/bin/activate
 SMI_IFILE=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/CLM5_SMI_reference_1960_1999.nc
 SMI_ODIR=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SMI_IRISCC/decadal/
 
-for thresh in 0.2 0.3; do
+for thresh in 0.05 0.1 0.2 0.3 ; do
   echo "SMI (CLM5), thresh=${thresh}"
   python decadal_statistics.py \
     --ifile "${SMI_IFILE}" \
@@ -32,7 +32,7 @@ done
 SPI_IFILE=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SXI_DETECT/SXI_92D.nc
 SPI_ODIR=/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/SXI_DETECT/decadal/
 
-for thresh in -1 -1.5 -2; do
+for thresh in -1 -1.5 -2 -3 ; do
   echo "SPI (SXI_P, 92D), thresh=${thresh}"
   python decadal_statistics.py \
     --ifile "${SPI_IFILE}" \
