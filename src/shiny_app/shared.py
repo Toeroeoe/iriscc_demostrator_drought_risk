@@ -55,9 +55,23 @@ SMI_STATS = ("mean", "dfreq", "min", "maxspell")
 
 
 def _discover_smi_files(model: str, stat: str) -> dict:
-    """Map decade start year → file path for a given SMI model and statistic."""
+    """Map decade start year → file path for a given SMI model and statistic.
+    
+    Handles both filename formats:
+    - CLM5_0.2_1960_mean.nc (with threshold)
+    - CLM51960_mean.nc (legacy, no threshold)
+    """
     out: dict = {}
-    for _f in sorted(glob.glob(str(_smi_dir / model / f"{model}*_{stat}.nc"))):
+    # Try the format with threshold first: CLM5_0.2_1960_mean.nc
+    pattern_with_thresh = _smi_dir / model / f"{model}_*_{stat}.nc"
+    for _f in sorted(glob.glob(str(pattern_with_thresh))):
+        _m = re.search(rf"{model}_[\d.]+_(\d{{4}})_{stat}\.nc$", _f)
+        if _m:
+            out[int(_m.group(1))] = _f
+            continue
+    # Try legacy format without threshold: CLM51960_mean.nc
+    pattern_legacy = _smi_dir / model / f"{model}*_{stat}.nc"
+    for _f in sorted(glob.glob(str(pattern_legacy))):
         _m = re.search(rf"{model}(\d{{4}})_{stat}\.nc$", _f)
         if _m:
             out[int(_m.group(1))] = _f
@@ -68,6 +82,17 @@ _smi_files = {
     model: {stat: _discover_smi_files(model, stat) for stat in SMI_STATS}
     for model in SMI_MODELS
 }
+
+# Helper to discover files for a specific threshold
+def _discover_smi_files_by_thresh(model: str, threshold: float, stat: str) -> dict:
+    """Map decade start year → file path for a given SMI model, threshold, and statistic."""
+    out: dict = {}
+    pattern = f"{model}_{threshold}_*{stat}.nc"
+    for _f in sorted(glob.glob(str(_smi_dir / model / pattern))):
+        _m = re.search(rf"{model}_{threshold}_(\d{{4}})_{stat}\.nc$", _f)
+        if _m:
+            out[int(_m.group(1))] = _f
+    return out
 
 # Per-model, per-statistic lazy data: SMI_STAT_DATA[model][stat][decade_year].
 SMI_STAT_DATA = {
@@ -89,6 +114,51 @@ if _clm5_mean_files:
 
 # Decade start years available for SMI (from the CLM5 mean files).
 smi_decade_years = sorted(_clm5_mean_files.keys())
+
+# ── SMI Threshold configuration ───────────────────────────────────────────────
+# SMI uses soil moisture thresholds (0.2, 0.3, etc.)
+# Discover available thresholds from files
+SMI_THRESHOLDS = []
+_smi_pattern = _smi_dir / "*/*_*_*.nc"
+for _f in sorted(glob.glob(str(_smi_pattern))):
+    # Pattern: <model>_<threshold>_<decade>_<stat>.nc
+    _m = re.search(r"[A-Z]+_(-?[\d.]+)_\d{4}_\w+\.nc$", _f)
+    if _m:
+        thresh = float(_m.group(1))
+        if thresh not in SMI_THRESHOLDS:
+            SMI_THRESHOLDS.append(thresh)
+SMI_THRESHOLDS.sort()
+
+DEFAULT_SMI_THRESH = 0.2 if 0.2 in SMI_THRESHOLDS else (
+    SMI_THRESHOLDS[0] if SMI_THRESHOLDS else None
+)
+
+# Per-model, per-threshold, per-statistic lazy data
+SMI_STAT_DATA_BY_THRESH: dict = {
+    model: {}
+    for model in SMI_MODELS
+}
+for model in SMI_MODELS:
+    for thresh in SMI_THRESHOLDS:
+        SMI_STAT_DATA_BY_THRESH[model][thresh] = {}
+        for stat in SMI_STATS:
+            files = _discover_smi_files_by_thresh(model, thresh, stat)
+            SMI_STAT_DATA_BY_THRESH[model][thresh][stat] = _LazyStatFiles(files, "SMI")
+
+
+
+
+# Default SMI data access
+SMI_STAT_DATA_DEFAULT = {}
+if DEFAULT_SMI_THRESH is not None:
+    # Build default data mapping only when a valid default threshold exists.
+    SMI_STAT_DATA_DEFAULT = {
+        model: {
+            stat: SMI_STAT_DATA_BY_THRESH[model][DEFAULT_SMI_THRESH][stat]
+            for stat in SMI_STATS
+        }
+        for model in SMI_MODELS
+    }
 
 # ── Streamflow / discharge data ───────────────────────────────────────────────
 # Loaded only when present. When the discharge dataset has not been synced yet
@@ -325,47 +395,183 @@ gauge_map_html = _build_gauge_map_html(gauge_meta)
 # discovered at import time, and each decade's grid is read on first access.
 # If the SPI dataset has not been added yet, the app degrades gracefully — the
 # meteorological maps show an "not available" message instead of crashing.
+#
+# File naming: SXI_P_<agg>_<threshold>_<decade>_<stat>.nc
+#   - agg: aggregation period (e.g., 31D, 92D, 183D, 365D)
+#   - threshold: drought threshold (e.g., -1, -1.5, -2)
+#   - decade: start year of decade (1960, 1970, ..., 2010)
+#   - stat: statistic (mean, dfreq, min, maxspell)
 
 _spi_dir = data_dir / "decadal_SPI"
 
-# Decade-mean files, e.g. SXI_P_92D_1960_1969_timmean.nc → {1960: path, ...}
-_spi_mean_files: dict = {}
-for _f in sorted(glob.glob(str(_spi_dir / "SXI_P_*_timmean.nc"))):
-    _m = re.search(r"(\d{4})_(\d{4})", _f)
+# Available SPI aggregation periods and thresholds (determined from files)
+SPI_AGGREGATION_PERIODS = []
+SPI_THRESHOLDS = []
+SPI_MODELS = ["ERA5"]  # Currently only ERA5 forcing data available
+
+# Parse file patterns to discover available dimensions
+_spi_pattern = _spi_dir / "SXI_P_*_*_*.nc"
+for _f in sorted(glob.glob(str(_spi_pattern))):
+    _m = re.search(r"SXI_P_([\d]+D)_(-?[\d.]+)_\d{4}_\w+\.nc$", _f)
     if _m:
-        _spi_mean_files[int(_m.group(1))] = _f
+        agg = _m.group(1)
+        thresh = float(_m.group(2))
+        if agg not in SPI_AGGREGATION_PERIODS:
+            SPI_AGGREGATION_PERIODS.append(agg)
+        if thresh not in SPI_THRESHOLDS:
+            SPI_THRESHOLDS.append(thresh)
+
+SPI_AGGREGATION_PERIODS.sort()
+SPI_THRESHOLDS.sort()
 
 
-def _discover_spi_stat_files(suffix: str) -> dict:
-    """Map decade start year → file path for a decadal SPI statistic.
-
-    Files are produced by data/processing/decadal_statistics.sh, one per decade:
-      SXI_P_92D_<year>_dfreq.nc     fraction of time in drought (0..1)
-      SXI_P_92D_<year>_min.nc       most negative SPI reached (peak severity)
-      SXI_P_92D_<year>_maxspell.nc  longest consecutive dry spell (days)
+def _discover_spi_files(pattern_suffix: str) -> dict:
+    """Map (aggregation, threshold, decade) → file path for SPI data.
+    
+    Returns a nested dict: agg_period → threshold → decade → file_path
     """
     out: dict = {}
-    for _f in sorted(glob.glob(str(_spi_dir / f"SXI_P_92D_*_{suffix}.nc"))):
-        _m = re.search(rf"SXI_P_92D_(\d{{4}})_{suffix}\.nc$", _f)
+    for _f in sorted(glob.glob(str(_spi_dir / f"SXI_P_*_*_{pattern_suffix}.nc"))):
+        _m = re.search(rf"SXI_P_([\d]+D)_(-?[\d.]+)_(\d{{4}})_{pattern_suffix}\.nc$", _f)
         if _m:
-            out[int(_m.group(1))] = _f
+            agg = _m.group(1)
+            thresh = float(_m.group(2))
+            decade = int(_m.group(3))
+            if agg not in out:
+                out[agg] = {}
+            if thresh not in out[agg]:
+                out[agg][thresh] = {}
+            out[agg][thresh][decade] = _f
     return out
+
+
+def _discover_spi_mean_files() -> dict:
+    """Map (aggregation, threshold, decade_start) → file path for SPI mean files.
+    
+    The repository contains two possible naming conventions for the mean statistic:
+    * ``SXI_P_<agg>_<thresh>_<start>_<end>_timmean.nc`` (timmean files)
+    * ``SXI_P_<agg>_<thresh>_<start>_mean.nc`` (simple mean files).  This function
+      discovers both and stores them under the same ``out`` structure so the rest of
+      the code can treat ``"mean"`` like any other statistic.
+    """
+    out: dict = {}
+    # 1. Timmean style (if present)
+    for _f in sorted(glob.glob(str(_spi_dir / "SXI_P_*_*_*_timmean.nc"))):
+        _m = re.search(r"SXI_P_([\d]+D)_(-?[\d.]+)_(\d{4})_\d{4}_timmean.nc$", _f)
+        if _m:
+            agg = _m.group(1)
+            thresh = float(_m.group(2))
+            decade = int(_m.group(3))
+            out.setdefault(agg, {}).setdefault(thresh, {})[decade] = _f
+    # 2. Simple mean style (the files that actually exist in this repo)
+    for _f in sorted(glob.glob(str(_spi_dir / "SXI_P_*_*_*_mean.nc"))):
+        _m = re.search(r"SXI_P_([\d]+D)_(-?[\d.]+)_(\d{4})_mean.nc$", _f)
+        if _m:
+            agg = _m.group(1)
+            thresh = float(_m.group(2))
+            decade = int(_m.group(3))
+            out.setdefault(agg, {}).setdefault(thresh, {})[decade] = _f
+    return out
+
+
+# Discover SPI mean files
+_spi_mean_files_raw = _discover_spi_mean_files()
+
+# Extract decade years from mean files (all combinations that exist)
+_spi_decade_years = set()
+for agg in _spi_mean_files_raw:
+    for thresh in _spi_mean_files_raw[agg]:
+        _spi_decade_years.update(_spi_mean_files_raw[agg][thresh].keys())
+
+SPI_DECADE_YEARS = sorted(_spi_decade_years)
+
+# Current defaults (will be controlled by UI)
+DEFAULT_SPI_AGG = "92D" if "92D" in SPI_AGGREGATION_PERIODS else (
+    SPI_AGGREGATION_PERIODS[0] if SPI_AGGREGATION_PERIODS else None
+)
+DEFAULT_SPI_THRESH = -1.0 if -1.0 in SPI_THRESHOLDS else (
+    SPI_THRESHOLDS[0] if SPI_THRESHOLDS else None
+)
 
 
 # 2-D lat/lon (curvilinear) – identical across all decades, loaded once if the
 # dataset is present. None when SPI data has not been added.
 SPI_lat = None
 SPI_lon = None
-if _spi_mean_files:
-    with nc.Dataset(_spi_mean_files[min(_spi_mean_files)]) as _ds:
-        SPI_lat = np.ma.filled(_ds.variables["lat"][:].astype(np.float32), np.nan)
-        SPI_lon = np.ma.filled(_ds.variables["lon"][:].astype(np.float32), np.nan)
+SPI_DEFAULT_MEAN_FILES = _spi_mean_files_raw.get(DEFAULT_SPI_AGG, {}).get(DEFAULT_SPI_THRESH, {})
+def _load_latlon_from_ds(_ds):
+    # Try common latitude / longitude variable names
+    _lat = None
+    _lon = None
+    for _lat_name in ("lat", "latitude", "y"):
+        if _lat_name in _ds.variables:
+            _lat = _ds.variables[_lat_name][:].astype(np.float32)
+            break
+    for _lon_name in ("lon", "longitude", "x"):
+        if _lon_name in _ds.variables:
+            _lon = _ds.variables[_lon_name][:].astype(np.float32)
+            break
+    return _lat, _lon
 
-# Per-statistic decadal data keyed by statistic name; each value is a lazy,
-# dict-like mapping of decade start year → 2-D field, read on first access.
-SPI_STAT_DATA: dict = {
-    "mean": _LazyStatFiles(_spi_mean_files, "SXI_P"),
-    "dfreq": _LazyStatFiles(_discover_spi_stat_files("dfreq"), "SXI_P"),
-    "min": _LazyStatFiles(_discover_spi_stat_files("min"), "SXI_P"),
-    "maxspell": _LazyStatFiles(_discover_spi_stat_files("maxspell"), "SXI_P"),
-}
+if SPI_DEFAULT_MEAN_FILES:
+    with nc.Dataset(SPI_DEFAULT_MEAN_FILES[min(SPI_DEFAULT_MEAN_FILES)]) as _ds:
+        _lat_arr, _lon_arr = _load_latlon_from_ds(_ds)
+        # Handle case where coordinate variables don't exist (returns 0-d arrays containing None)
+        if _lat_arr is None or (isinstance(_lat_arr, np.ndarray) and _lat_arr.ndim == 0):
+            SPI_lat = None
+        else:
+            SPI_lat = np.ma.filled(_lat_arr, np.nan)
+        if _lon_arr is None or (isinstance(_lon_arr, np.ndarray) and _lon_arr.ndim == 0):
+            SPI_lon = None
+        else:
+            SPI_lon = np.ma.filled(_lon_arr, np.nan)
+    
+    # Load curvilinear coordinates (xc/yc) from the CLM5 domain file for SPI grid
+    # The SPI data uses a curvilinear grid where xc/yc are 2D arrays
+    _domain_file = data_dir / "clm5_grid" / "domain.lnd.CLM5EU3_v4.nc"
+    if _domain_file.exists():
+        with nc.Dataset(_domain_file) as _ds:
+            if "xc" in _ds.variables and "yc" in _ds.variables:
+                # xc and yc are 2D arrays with shape (nj, ni) = (1544, 1592)
+                SPI_lon = np.ma.filled(_ds.variables["xc"][:].astype(np.float32), np.nan)
+                SPI_lat = np.ma.filled(_ds.variables["yc"][:].astype(np.float32), np.nan)
+            else:
+                # Fallback to synthetic coordinates if xc/yc not found
+                _nlat = _ds.dimensions['nj'].size
+                _nlon = _ds.dimensions['ni'].size
+                SPI_lon = np.linspace(351.1, 417.0, _nlon)
+                SPI_lat = np.linspace(27.0, 65.7, _nlat)
+    else:
+        # Domain file not found - generate synthetic coordinates as fallback
+        _sample_file = next(iter(SPI_DEFAULT_MEAN_FILES.values()))
+        with nc.Dataset(_sample_file) as _spi_ds:
+            _nlat = _spi_ds.dimensions['lat'].size
+            _nlon = _spi_ds.dimensions['lon'].size
+        SPI_lon = np.linspace(351.1, 417.0, _nlon)
+        SPI_lat = np.linspace(27.0, 65.7, _nlat)
+
+# Discover non-mean stat files once (outside the nested loop) to avoid
+# redundant glob scans proportional to N_agg × N_thresh.
+_spi_stat_files_raw = {stat: _discover_spi_files(stat) for stat in ["dfreq", "min", "maxspell"]}
+
+# Per-statistic, per-aggregation, per-threshold decadal data
+# Structure: SPI_STAT_DATA[agg][threshold][stat] -> _LazyStatFiles
+SPI_STAT_DATA: dict = {}
+for agg in SPI_AGGREGATION_PERIODS:
+    SPI_STAT_DATA[agg] = {}
+    for thresh in SPI_THRESHOLDS:
+        SPI_STAT_DATA[agg][thresh] = {}
+        # Mean files
+        mean_files = _spi_mean_files_raw.get(agg, {}).get(thresh, {})
+        SPI_STAT_DATA[agg][thresh]["mean"] = _LazyStatFiles(mean_files, "SXI_P")
+        # Other statistics (files already discovered once outside the loop)
+        for stat in ["dfreq", "min", "maxspell"]:
+            files_for_this = _spi_stat_files_raw[stat].get(agg, {}).get(thresh, {})
+            SPI_STAT_DATA[agg][thresh][stat] = _LazyStatFiles(files_for_this, "SXI_P")
+
+# Convenience access for current defaults (flat dict for the default aggregation and threshold)
+SPI_STAT_DATA_DEFAULT: dict = {}
+if DEFAULT_SPI_AGG is not None and DEFAULT_SPI_THRESH is not None:
+    _default_branch = SPI_STAT_DATA.get(DEFAULT_SPI_AGG, {}).get(DEFAULT_SPI_THRESH, {})
+    for _stat, _lazy in _default_branch.items():
+        SPI_STAT_DATA_DEFAULT[_stat] = _lazy

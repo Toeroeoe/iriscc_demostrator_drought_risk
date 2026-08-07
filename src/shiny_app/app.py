@@ -9,17 +9,24 @@ from datetime import date, timedelta
 import matplotlib.pyplot as plt
 import numpy as np
 from shared import (
-    SMI_lat,
-    SMI_lon,
-    SMI_STAT_DATA,
-    SPI_lat,
-    SPI_lon,
-    SPI_STAT_DATA,
-    discharge_time,
-    gauge_map_html,
-    gauge_meta,
-    get_gauge_discharge,
-    images,
+SMI_lat,
+SMI_lon,
+SMI_STAT_DATA,
+SMI_STAT_DATA_BY_THRESH,
+DEFAULT_SMI_THRESH,
+SMI_THRESHOLDS,
+SPI_lat,
+SPI_lon,
+SPI_STAT_DATA,
+SPI_THRESHOLDS,
+SPI_AGGREGATION_PERIODS,
+DEFAULT_SPI_AGG,
+DEFAULT_SPI_THRESH,
+discharge_time,
+gauge_map_html,
+gauge_meta,
+get_gauge_discharge,
+images,
 )
 from shiny import App, render, ui
 from shiny.types import ImgData
@@ -223,6 +230,7 @@ page_droughts = ui.page_fluid(
                 },
                 selected="dfreq",
             ),
+            ui.output_ui("dynamic_threshold_slider"),
             ui.input_select(
                 "model",
                 "Atmospheric forcing",
@@ -246,7 +254,7 @@ page_droughts = ui.page_fluid(
             ),
             open="always",
             width="300px",
-        ),  # Set sidebar width (default is 250px)
+        ),
         ui.navset_card_pill(
             ui.nav_panel(
                 "Meteorological",
@@ -265,7 +273,8 @@ page_droughts = ui.page_fluid(
                 ui.HTML(gauge_map_html),
                 ui.output_plot("discharge_plot", height="320px"),
             ),
-            title="Drought occurence",
+            id="drought_tab",  # Add id to detect active tab
+            title="Drought occurence",  # Tab set title
         ),
         ui.navset_card_pill(
             ui.nav_panel("Crop yield", ""),
@@ -273,7 +282,7 @@ page_droughts = ui.page_fluid(
             ui.nav_panel("Mortality"),
             title="Impacts",
         ),
-    ),
+    ),  # Close page_sidebar
 )
 
 # ── Static informational pages ──────────────────────────────────────────────
@@ -524,6 +533,50 @@ def server(input, output, session) -> None:
         ax.axis("off")
         return fig
 
+    @render.ui
+    def dynamic_threshold_slider():
+        """Dynamically show threshold slider based on active tab and statistic.
+        
+        - mean: No threshold (mean index value)
+        - min (peak severity): No threshold (minimum value reached)
+        - dfreq, maxspell: Show threshold (depends on threshold for counting)
+        """
+        stat_key = input.statistic()
+        active_tab = input.drought_tab()  # Get active tab from navset
+        
+        # Statistics that don't use thresholds
+        if stat_key in ["mean", "min"]:
+            return None
+        
+        # Show threshold based on active tab (for dfreq and maxspell)
+        if active_tab == "Meteorological":
+            # Show SPI threshold
+            if SPI_THRESHOLDS:
+                return ui.div(
+                    ui.input_select(
+                        "spi_thresh",
+                        "SPI threshold",
+                        choices={t: f"SPI ≤ {t}" for t in sorted(SPI_THRESHOLDS)},
+                        selected=str(DEFAULT_SPI_THRESH) if DEFAULT_SPI_THRESH is not None else "-1.0",
+                    )
+                )
+        elif active_tab == "Agricultural":
+            # Show SMI threshold
+            if SMI_THRESHOLDS:
+                return ui.div(
+                    ui.input_slider(
+                        "smi_thresh",
+                        "SMI threshold",
+                        min=min(SMI_THRESHOLDS),
+                        max=max(SMI_THRESHOLDS),
+                        value=DEFAULT_SMI_THRESH if DEFAULT_SMI_THRESH is not None else 0.0,
+                        step=0.1,
+                        ticks=True,
+                    )
+                )
+        
+        return None
+
     @render.plot
     def render_spi_map():
         from plots import EU1_map
@@ -540,7 +593,15 @@ def server(input, output, session) -> None:
                 f'SPI data for "{model_label}" is not yet available.'
             )
 
-        stat_data = SPI_STAT_DATA.get(stat_key, {})
+        # Verify we have latitude / longitude for the selected aggregation
+        if SPI_lat is None or SPI_lon is None:
+            return _message_fig(
+                "SPI latitude/longitude data not available – cannot draw map."
+            )
+
+        # Get the SPI threshold (now a string from select input, convert to float)
+        spi_thresh = float(input.spi_thresh())
+        stat_data = SPI_STAT_DATA.get(DEFAULT_SPI_AGG, {}).get(spi_thresh, {}).get(stat_key, {})
         if not stat_data:
             return _message_fig(
                 f'The "{stat["label"]}" statistic has not been computed yet.'
@@ -551,7 +612,7 @@ def server(input, output, session) -> None:
             decade_year = min(stat_data.keys())
 
         spi_data = stat_data[decade_year] * stat["scale"]
-        spi_data = _blank_ocean(spi_data, SPI_STAT_DATA.get("mean"), decade_year)
+        spi_data = _blank_ocean(spi_data, SPI_STAT_DATA.get(DEFAULT_SPI_AGG, {}).get(spi_thresh, {}).get("mean"), decade_year)
 
         spi_map = EU1_map(
             suptitle=f"Meteorological drought \u2014 {stat['label']}",
@@ -563,9 +624,45 @@ def server(input, output, session) -> None:
         )
         fig, _, _ = spi_map.create()
 
+        # Determine coordinate arrays for pcolormesh
+        # SPI now uses curvilinear 2D coordinates (xc/yc) from domain file
+        if SPI_lon is None or SPI_lat is None:
+            # Fallback to index grid if coordinates not available
+            lon_grid, lat_grid = np.meshgrid(
+                np.arange(spi_data.shape[1]),
+                np.arange(spi_data.shape[0])
+            )
+        elif SPI_lon.ndim == 2 and SPI_lat.ndim == 2:
+            # Use 2D curvilinear coordinates directly (already meshgrid format)
+            if SPI_lon.shape == SPI_lat.shape == spi_data.shape:
+                lon_grid = SPI_lon
+                lat_grid = SPI_lat
+            else:
+                # Shape mismatch - fallback to index grid
+                lon_grid, lat_grid = np.meshgrid(
+                    np.arange(spi_data.shape[1]),
+                    np.arange(spi_data.shape[0])
+                )
+        elif SPI_lon.ndim == 1 and SPI_lat.ndim == 1:
+            # Use 1D coordinate arrays and create meshgrid
+            if (SPI_lon.size == spi_data.shape[1] and SPI_lat.size == spi_data.shape[0]):
+                lon_grid, lat_grid = np.meshgrid(SPI_lon, SPI_lat)
+            else:
+                # Size mismatch - fallback to index grid
+                lon_grid, lat_grid = np.meshgrid(
+                    np.arange(spi_data.shape[1]),
+                    np.arange(spi_data.shape[0])
+                )
+        else:
+            # Unknown format - fallback to index grid
+            lon_grid, lat_grid = np.meshgrid(
+                np.arange(spi_data.shape[1]),
+                np.arange(spi_data.shape[0])
+            )
+
         spi_map.pcolormesh(
-            SPI_lon,
-            SPI_lat,
+            lon_grid,
+            lat_grid,
             spi_data,
             cmap=stat["cmap"],
             vmin=stat["vmin"],
@@ -593,7 +690,9 @@ def server(input, output, session) -> None:
                 "available. Select \u201cERA5\u201d to view the maps."
             )
         else:
-            stat_data = SPI_STAT_DATA.get(stat_key, {})
+            # selected_thresh is now a string from the select input, convert to float
+            spi_thresh = float(input.spi_thresh())
+            stat_data = SPI_STAT_DATA.get(DEFAULT_SPI_AGG, {}).get(spi_thresh, {}).get(stat_key, {})
             shown_year = (
                 decade_year
                 if decade_year in stat_data or not stat_data
@@ -625,8 +724,11 @@ def server(input, output, session) -> None:
         stat = SMI_STATISTICS.get(stat_key, SMI_STATISTICS["mean"])
         decade_year = input.dec().year
 
-        clm5_stat = SMI_STAT_DATA["CLM5"].get(stat_key)
-        mhm_stat = SMI_STAT_DATA["mHM"].get(stat_key)
+        # Map the slider value to the nearest available threshold (floats can be imprecise)
+        selected_thresh = input.smi_thresh()
+        smi_thresh = min(SMI_THRESHOLDS, key=lambda t: abs(t - selected_thresh)) if SMI_THRESHOLDS else selected_thresh
+        clm5_stat = SMI_STAT_DATA_BY_THRESH["CLM5"].get(smi_thresh, {}).get(stat_key)
+        mhm_stat = SMI_STAT_DATA_BY_THRESH["mHM"].get(smi_thresh, {}).get(stat_key)
         if not clm5_stat or not mhm_stat:
             return _message_fig(
                 f'The “{stat["label"]}” statistic is not available for soil '
@@ -640,10 +742,10 @@ def server(input, output, session) -> None:
         clm5_smi_data = clm5_stat[decade_year] * stat["scale"]
         mhm_smi_data = mhm_stat[decade_year] * stat["scale"]
         clm5_smi_data = _blank_ocean(
-            clm5_smi_data, SMI_STAT_DATA["CLM5"].get("mean"), decade_year
+            clm5_smi_data, SMI_STAT_DATA_BY_THRESH["CLM5"].get(smi_thresh, {}).get("mean"), decade_year
         )
         mhm_smi_data = _blank_ocean(
-            mhm_smi_data, SMI_STAT_DATA["mHM"].get("mean"), decade_year
+            mhm_smi_data, SMI_STAT_DATA_BY_THRESH["mHM"].get(smi_thresh, {}).get("mean"), decade_year
         )
 
         # Create fresh map instance (required by Shiny's matplotlib backend)
