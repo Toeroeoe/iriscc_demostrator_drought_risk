@@ -843,7 +843,7 @@ def server(input, output, session) -> None:
                 color=c["primary"],
                 linewidth=0.9,
                 alpha=0.9,
-                label="Observed (Q\u2080\u2087\u2085)",
+                label=f"Observed ({gauge_id})",
             )
         if qsim_mo is not None:
             ax.plot(
@@ -852,7 +852,7 @@ def server(input, output, session) -> None:
                 color="#bb86fc",
                 linewidth=1.2,
                 alpha=0.9,
-                label="Simulated (Q\u209b\u1d35\u2098)",
+                label="Simulated",
             )
 
         ax.set_title(title, color=c["text"], fontsize=12, pad=8)

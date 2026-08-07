@@ -147,18 +147,10 @@ class demo_fig:
         # Use theme text color instead of hardcoded white
         mpl.rcParams["text.color"] = self.palette["text"]
 
-        # Position suptitle centered over the two maps (columns 0 and 1), not including colorbar
-        # With width_ratios [1, 1, 0.08] and margins (left=0.01, right=0.91):
-        # Total available width = 0.91 - 0.01 = 0.90
-        # Maps occupy (1+1)/(1+1+0.08) = 2/2.08 of the plotting area
-        # Map width = 0.90 * (2.0/2.08) ≈ 0.865
-        # Center of maps = 0.01 + 0.865/2 ≈ 0.44
-        map_center_x = 0.44
-
         self.fig.suptitle(
             self.suptitle,
             fontsize=self.fs_title + 2,
-            x=map_center_x,  # Center over maps only
+            x=0.5,  # Center over the full figure so long titles don't clip
             y=0.98,
             fontfamily=self.theme_config.get_font_family("heading"),
             color=self.palette["text"],
@@ -268,7 +260,7 @@ class EU1_map(demo_fig):
         self.fig.suptitle(
             self.suptitle,
             fontsize=self.fs_title + 2,
-            x=0.44,
+            x=0.5,  # Center over the full figure so long titles don't clip
             y=0.96,  # comfortably above the axes top (0.87)
             fontfamily=self.theme_config.get_font_family("heading"),
             color=self.palette["text"],
