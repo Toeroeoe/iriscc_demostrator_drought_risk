@@ -418,27 +418,89 @@ class EU3_map(demo_fig):
 
     # Point size for gridline labels, colorbar label and colorbar ticks.
     fs_map_label: int = 12
+    
+    # Option for horizontal colorbar below plots
+    horizontal_cbar: bool = False
 
     # For efficient pcolormesh updates
     pcolormesh_obj: Optional[object] = field(default=None, init=False, repr=False)
     pcolormesh_obj2: Optional[object] = field(default=None, init=False, repr=False)
 
+    def __post_init__(self):
+        """Override demo_fig to use different GridSpec layout for horizontal colorbar."""
+        # Apply theme to matplotlib
+        self.theme_config.apply_to_matplotlib()
+        self.palette = self.theme_config.get_plot_palette()
+
+        self.fig = plt.figure(figsize=(self.fx, self.fy), dpi=self.dpi)
+        # Install a no-op layout engine so Shiny sees a truthy, adjust_compatible
+        # engine and leaves it alone instead of replacing it with tight layout.
+        self.fig.set_layout_engine(_NoOpLayoutEngine())
+        self.fig.tight_layout = lambda *a, **kw: None  # belt-and-braces
+
+        if self.horizontal_cbar:
+            # Create GridSpec with 2 rows: plots on top, horizontal colorbar below
+            self.gs = GridSpec(
+                figure=self.fig,
+                nrows=2,
+                ncols=2,
+                height_ratios=[1, 0.028],  # Plots tall, colorbar smaller (2.8% of plot height, -30% from 4%)
+                wspace=0.15,  # Horizontal space between plots
+                hspace=0.001,  # Minimal vertical space between rows
+                left=0.08,  # Left margin for y-axis labels
+                right=0.92,  # Right margin for gridline labels
+                top=0.92,
+                bottom=0.08,  # Reduced bottom margin (more space for colorbar)
+            )
+        else:
+            # Create GridSpec with 3 columns: plot1, plot2, colorbar
+            self.gs = GridSpec(
+                figure=self.fig,
+                nrows=1,
+                ncols=3,
+                width_ratios=[1, 1, 0.08],  # Two equal plots, narrow colorbar
+                wspace=0.26,  # Spacing between subplots
+                left=0.01,  # Remove left margin
+                right=0.91,  # Leave space for colorbar label
+                top=0.92,  # Remove top margin
+                bottom=0.04,  # Remove bottom margin
+            )
+
+        self.fig.patch.set_alpha(0.0)
+        # Use theme text color instead of hardcoded white
+        mpl.rcParams["text.color"] = self.palette["text"]
+
+        self.fig.suptitle(
+            self.suptitle,
+            fontsize=self.fs_title + 2,
+            x=0.5,  # Center over the full figure so long titles don't clip
+            y=0.98,
+            fontfamily=self.theme_config.get_font_family("heading"),
+            color=self.palette["text"],
+        )
+
+        # Prevent Shiny's fig.tight_layout() from corrupting GeoAxes layout
+        self.fig.tight_layout = lambda *a, **kw: None
+
     def create(self):
-
+        """Create the figure with maps and return figure, gridspec, and axes."""
         self.plot_projection = ccrs.PlateCarree()
-
         self.globe = ccrs.Globe(
             semimajor_axis=self.semmj_axis, semiminor_axis=self.semmn_axis
         )
-
         self.projection = ccrs.RotatedPole(
             pole_longitude=self.rotnpole_lon,
             pole_latitude=self.rotnpole_lat,
             globe=self.globe,
         )
+        # Call create_axes which will create axes and add basemaps/gridlines
+        return self.create_axes()
 
+    def create_axes(self):
+        # First, create the axes using the parent class
         super().create_axes()
-
+        
+        # Now add basemaps and gridlines to both axes
         for i, ax in enumerate([self.ax, self.ax2]):
             if not isinstance(ax, geoaxes.GeoAxesSubplot):
                 raise TypeError("Expected a GeoAxesSubplot for the map axes.")
@@ -492,14 +554,14 @@ class EU3_map(demo_fig):
                 "color": self.theme_config.colors["text"],  # Use theme text color
             }
 
-            # Apply body font to axis labels
-            self.ax.set_xlabel(
-                self.ax.get_xlabel(),
+            # Apply body font to axis labels for the current axis
+            ax.set_xlabel(
+                ax.get_xlabel(),
                 fontfamily=self.theme_config.get_font_family("body"),
                 color=self.theme_config.colors["text"],
             )
-            self.ax.set_ylabel(
-                self.ax.get_ylabel(),
+            ax.set_ylabel(
+                ax.get_ylabel(),
                 fontfamily=self.theme_config.get_font_family("body"),
                 color=self.theme_config.colors["text"],
             )
@@ -543,47 +605,86 @@ class EU3_map(demo_fig):
 
         return pcolormesh_obj
 
-    def colorbar(self, colormesh, cbar_label: str = "", extend: str = "neither"):
-        """Add a styled colorbar on the right of both plots."""
-
+    def colorbar(self, colormesh, cbar_label: str = "", extend: str = "neither", horizontal: bool = None):
+        """Add a styled colorbar.
+        
+        Args:
+            colormesh: The mappable object
+            cbar_label: Label for the colorbar
+            extend: 'neither', 'both', 'min', or 'max' for colorbar ends
+            horizontal: If True, create horizontal colorbar below plots.
+                       If False, create vertical colorbar on right.
+                       If None, use self.horizontal_cbar setting.
+        """
         if self.pcolormesh_obj is None:
             raise ValueError("pcolormesh must be created before adding a colorbar.")
-
-        # Create colorbar in the third GridSpec column (avoids Shiny layout issues)
-        cbar_ax = self.fig.add_subplot(self.gs[0, 2])
-
-        # Manually adjust colorbar axis height to match map plots
-        # Get current position [left, bottom, width, height]
-        pos = cbar_ax.get_position()
-        shrink_factor = 0.8  # Reduce to 80% of current height
-        new_height = pos.height * shrink_factor
-        # Center vertically
-        new_bottom = pos.y0 + (pos.height - new_height) / 2
-
-        cbar_ax.set_position((pos.x0, new_bottom, pos.width, new_height))
-
-        # Create colorbar in the dedicated axis
-        self.cbar = self.fig.colorbar(
-            colormesh, cax=cbar_ax, orientation="vertical", extend=extend
-        )
-
-        # Style colorbar to match theme
-        # Colorbar label font (mono font for data labels)
-        self.cbar.set_label(
-            cbar_label,
-            fontfamily=self.theme_config.get_font_family("mono"),
-            fontsize=self.fs_map_label,
-            color=self.theme_config.colors["text"],
-        )
-
-        # Colorbar tick labels font
-        self.cbar.ax.tick_params(
-            labelsize=self.fs_map_label, colors=self.theme_config.colors["text"]
-        )
-
-        # Apply font family to tick labels
-        for label in self.cbar.ax.get_yticklabels():
-            label.set_fontfamily(self.theme_config.get_font_family("mono"))
-            label.set_color(self.theme_config.colors["text"])
-
+        
+        # Use provided horizontal parameter or fall back to class setting
+        if horizontal is None:
+            horizontal = self.horizontal_cbar
+        
+        if horizontal:
+            # Create horizontal colorbar below plots using GridSpec
+            cbar_ax = self.fig.add_subplot(self.gs[1, :])  # Span both columns
+            
+            # Manually adjust colorbar axis to be very close to plots
+            # Increase height by 50% and width/height by 100% (double size)
+            pos = cbar_ax.get_position()
+            new_height = pos.height * 1.05  # 105% of cell height (reduced by ~30% from 1.5)
+            new_width = pos.width * 1.0  # 100% of cell width (was 50%)
+            # Center the colorbar in the cell
+            new_left = pos.x0 + (pos.width - new_width) / 2
+            # Position at TOP of cell (closest to plots, so it appears "in front")
+            new_bottom = pos.y1 - new_height  # y1 is top of cell
+            cbar_ax.set_position((new_left, new_bottom, new_width, new_height))
+            
+            self.cbar = self.fig.colorbar(
+                colormesh, cax=cbar_ax, orientation="horizontal", extend=extend
+            )
+            
+            # Style horizontal colorbar
+            self.cbar.set_label(
+                cbar_label,
+                fontfamily=self.theme_config.get_font_family("mono"),
+                fontsize=self.fs_map_label,
+                color=self.theme_config.colors["text"],
+                labelpad=15,  # Increased label padding to separate from colorbar
+            )
+            
+            # Show only labeled (white) tick labels - hide all others
+            self.cbar.ax.tick_params(
+                labelsize=self.fs_map_label - 2, colors=self.theme_config.colors["text"], pad=10  # Positive pad for spacing
+            )
+            
+            for label in self.cbar.ax.get_xticklabels():
+                label.set_fontfamily(self.theme_config.get_font_family("mono"))
+                label.set_color(self.theme_config.colors["text"])
+        else:
+            # Create vertical colorbar on right (original behavior)
+            cbar_ax = self.fig.add_subplot(self.gs[0, 2])
+            pos = cbar_ax.get_position()
+            shrink_factor = 0.8
+            new_height = pos.height * shrink_factor
+            new_bottom = pos.y0 + (pos.height - new_height) / 2
+            cbar_ax.set_position((pos.x0, new_bottom, pos.width, new_height))
+            
+            self.cbar = self.fig.colorbar(
+                colormesh, cax=cbar_ax, orientation="vertical", extend=extend
+            )
+            
+            self.cbar.set_label(
+                cbar_label,
+                fontfamily=self.theme_config.get_font_family("mono"),
+                fontsize=self.fs_map_label,
+                color=self.theme_config.colors["text"],
+            )
+            
+            self.cbar.ax.tick_params(
+                labelsize=self.fs_map_label, colors=self.theme_config.colors["text"]
+            )
+            
+            for label in self.cbar.ax.get_yticklabels():
+                label.set_fontfamily(self.theme_config.get_font_family("mono"))
+                label.set_color(self.theme_config.colors["text"])
+        
         return self.cbar

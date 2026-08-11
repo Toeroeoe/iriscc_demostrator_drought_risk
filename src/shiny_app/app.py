@@ -7,26 +7,25 @@ Returns:
 from datetime import date, timedelta
 
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap, BoundaryNorm
 import numpy as np
 from shared import (
-SMI_lat,
-SMI_lon,
-SMI_STAT_DATA,
-SMI_STAT_DATA_BY_THRESH,
-DEFAULT_SMI_THRESH,
-SMI_THRESHOLDS,
-SPI_lat,
-SPI_lon,
-SPI_STAT_DATA,
-SPI_THRESHOLDS,
-SPI_AGGREGATION_PERIODS,
-DEFAULT_SPI_AGG,
-DEFAULT_SPI_THRESH,
-discharge_time,
-gauge_map_html,
-gauge_meta,
-get_gauge_discharge,
-images,
+    SMI_lat,
+    SMI_lon,
+    SMI_STAT_DATA_BY_THRESH,
+    DEFAULT_SMI_THRESH,
+    SMI_THRESHOLDS,
+    SPI_lat,
+    SPI_lon,
+    SPI_STAT_DATA,
+    SPI_THRESHOLDS,
+    DEFAULT_SPI_AGG,
+    DEFAULT_SPI_THRESH,
+    discharge_time,
+    gauge_map_html,
+    gauge_meta,
+    get_gauge_discharge,
+    images,
 )
 from shiny import App, render, ui
 from shiny.types import ImgData
@@ -104,16 +103,55 @@ SPI_STATISTICS = {
     },
 }
 
+# Custom color scheme for SMI mean statistic (from R code)
+# Colors: dark red (dry) to dark blue (wet)
+SMI_COLORS = [
+    "#730000",  # very dry
+    "#E60000",  # dry
+    "#FFAA00",  # moderately dry
+    "#FCD37F",  # slightly dry
+    "#FFFE01",  # near normal
+    "transparent",  # normal (will be handled specially)
+    "#C6EAC3",  # slightly wet
+    "#79CA6C",  # moderately wet
+    "#4CA666",  # wet
+    "#2C6476",  # very wet
+    "#0E1D43"   # extremely wet
+]
+# Breakpoints: 0 to 1 for SMI index
+SMI_BREAKS = [0.0, 0.02, 0.05, 0.1, 0.2, 0.3, 0.7, 0.8, 0.9, 0.95, 0.98, 1.0]
+
+# Create custom colormap and norm for SMI mean
+# Note: The middle "transparent" value (0.3-0.7) should actually be a normal color
+# Looking at the R code, it seems like 0.3-0.7 is meant to be near-normal/neutral
+# Let's use a light color for the middle range instead of transparent
+SMI_COLORS_ADJUSTED = [
+    "#730000",  # 0.0-0.02: very dry
+    "#E60000",  # 0.02-0.05: dry
+    "#FFAA00",  # 0.05-0.1: moderately dry
+    "#FCD37F",  # 0.1-0.2: slightly dry
+    "#FFFE01",  # 0.2-0.3: near normal
+    "#FFFFFF",  # 0.3-0.7: normal (white/neutral)
+    "#C6EAC3",  # 0.7-0.8: slightly wet
+    "#79CA6C",  # 0.8-0.9: moderately wet
+    "#4CA666",  # 0.9-0.95: wet
+    "#2C6476",  # 0.95-0.98: very wet
+    "#0E1D43"   # 0.98-1.0: extremely wet
+]
+SMI_CMAP = ListedColormap(SMI_COLORS_ADJUSTED)
+SMI_NORM = BoundaryNorm(SMI_BREAKS, SMI_CMAP.N)
+
 # Per-statistic plotting configuration for the agricultural (SMI) maps.
 # SMI is a 0..1 soil-moisture index (0 = driest). Two hydrological models
 # (CLM5, mHM) are shown side by side, so there is no atmospheric-forcing choice.
 SMI_STATISTICS = {
     "mean": {
         "label": "Mean index",
-        "cmap": "inferno_r",
-        "vmin": 0.3,
-        "vmax": 0.6,
-        "extend": "both",
+        "cmap": SMI_CMAP,  # Custom color scheme for SMI
+        "norm": SMI_NORM,  # Custom boundaries for color mapping
+        "vmin": 0.0,
+        "vmax": 1.0,
+        "extend": "neither",  # No over/under colors needed
         "scale": 1.0,
         "cbar_label": "Mean SMI (dimensionless)",
     },
@@ -128,10 +166,11 @@ SMI_STATISTICS = {
     },
     "min": {
         "label": "Peak severity",
-        "cmap": "YlOrRd_r",
+        "cmap": SMI_CMAP,  # Same custom color scheme as mean (0-1 SMI scale)
+        "norm": SMI_NORM,  # Same boundaries for consistency
         "vmin": 0.0,
-        "vmax": 0.3,
-        "extend": "max",
+        "vmax": 1.0,
+        "extend": "neither",
         "scale": 1.0,
         "cbar_label": "Minimum SMI reached",
     },
@@ -725,7 +764,7 @@ def server(input, output, session) -> None:
         decade_year = input.dec().year
 
         # Map the slider value to the nearest available threshold (floats can be imprecise)
-        selected_thresh = input.smi_thresh()
+        selected_thresh = float(input.smi_thresh())
         smi_thresh = min(SMI_THRESHOLDS, key=lambda t: abs(t - selected_thresh)) if SMI_THRESHOLDS else selected_thresh
         clm5_stat = SMI_STAT_DATA_BY_THRESH["CLM5"].get(smi_thresh, {}).get(stat_key)
         mhm_stat = SMI_STAT_DATA_BY_THRESH["mHM"].get(smi_thresh, {}).get(stat_key)
@@ -749,6 +788,8 @@ def server(input, output, session) -> None:
         )
 
         # Create fresh map instance (required by Shiny's matplotlib backend)
+        # Use horizontal colorbar for SMI mean and min statistics
+        use_horizontal_cbar = stat_key in ["mean", "min"]
         eu_map_instance = EU3_map(
             suptitle=(
                 f"Soil moisture (SMI) — {stat['label'].lower()}, "
@@ -758,37 +799,86 @@ def server(input, output, session) -> None:
             description="",
             color_mode="dark",
             theme_config=theme_config,
+            horizontal_cbar=use_horizontal_cbar,
         )
-        fig, _, axs = eu_map_instance.create()
+        fig, gs, _ = eu_map_instance.create()
 
         # Add data to both plots with the same scale
         if SMI_lon is not None and SMI_lat is not None:
+            # Prepare pcolormesh arguments
+            pcolormesh_kwargs = {
+                "cmap": stat["cmap"],
+                "alpha": 0.8,
+            }
+            # Add norm if available (for custom color boundaries)
+            if "norm" in stat:
+                pcolormesh_kwargs["norm"] = stat["norm"]
+            else:
+                pcolormesh_kwargs["vmin"] = stat["vmin"]
+                pcolormesh_kwargs["vmax"] = stat["vmax"]
+            
             eu_map_instance.pcolormesh(
                 SMI_lon,
                 SMI_lat,
                 clm5_smi_data,
                 ax_num=0,
-                cmap=stat["cmap"],
-                vmin=stat["vmin"],
-                vmax=stat["vmax"],
-                alpha=0.8,
+                **pcolormesh_kwargs
             )
             eu_map_instance.pcolormesh(
                 SMI_lon,
                 SMI_lat,
                 mhm_smi_data,
                 ax_num=1,
-                cmap=stat["cmap"],
-                vmin=stat["vmin"],
-                vmax=stat["vmax"],
-                alpha=0.8,
+                **pcolormesh_kwargs
             )
-            eu_map_instance.colorbar(
-                eu_map_instance.pcolormesh_obj,
-                cbar_label=stat["cbar_label"],
-                extend=stat["extend"],
-            )
-
+            
+            # Add colorbar using EU3_map.colorbar() method
+            # For SMI mean and min statistics with custom norm, use special colorbar
+            if stat_key in ["mean", "min"] and "norm" in stat:
+                midpoints = [(SMI_BREAKS[i] + SMI_BREAKS[i+1]) / 2 for i in range(len(SMI_BREAKS)-1)]
+                labels = [
+                    "Exceptional\ndrought",
+                    "Extreme\ndrought",
+                    "Severe\ndrought",
+                    "Moderate\ndrought",
+                    "Abnormally\ndry",
+                    "Normal",
+                    "Abnormally\nwet",
+                    "Moderate\nwetness",
+                    "Severe\nwetness",
+                    "Extreme\nwetness",
+                    "Exceptional\nwetness"
+                ]
+                
+                eu_map_instance.colorbar(
+                    eu_map_instance.pcolormesh_obj,
+                    cbar_label=stat["cbar_label"],
+                    extend=stat["extend"],
+                    horizontal=True,
+                )
+                
+                # Update colorbar ticks and labels after creation
+                cbar = eu_map_instance.cbar
+                if cbar is not None:
+                    cbar.set_label(stat["cbar_label"], color=theme_config.colors["text"])
+                    cbar.set_ticks(midpoints)
+                    cbar.set_ticklabels(labels)
+                    
+                    # Set tick label color and font size (smaller for long labels)
+                    for tick in cbar.ax.get_xticklabels():
+                        tick.set_color(theme_config.colors["text"])
+                        tick.set_fontsize(6)
+                    
+                    # Hide tick lines (only show the labels at midpoints)
+                    cbar.ax.tick_params(axis='x', which='both', bottom=False, top=False, length=0)
+            else:
+                eu_map_instance.colorbar(
+                    eu_map_instance.pcolormesh_obj,
+                    cbar_label=stat["cbar_label"],
+                    extend=stat["extend"],
+                    horizontal=use_horizontal_cbar,
+                )
+        
         return fig
 
     @render.plot
