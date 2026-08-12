@@ -88,7 +88,7 @@ SPI_STATISTICS = {
         "cmap": "YlOrRd_r",
         "vmin": -4.0,
         "vmax": -1.0,
-        "extend": "min",
+        "extend": "both",
         "scale": 1.0,
         "cbar_label": "Minimum SPI reached",
         "meaning": (
@@ -737,10 +737,9 @@ def server(input, output, session) -> None:
         spi_data = stat_data[decade_year] * stat["scale"]
         spi_data = _blank_ocean(spi_data, SPI_STAT_DATA.get(DEFAULT_SPI_AGG, {}).get(spi_thresh, {}).get("mean"), decade_year)
 
-        # For drought frequency, calculate dynamic vmin/vmax based on actual data range
-        # This makes the colormap more informative when actual values vary significantly
-        if stat_key == "dfreq":
-            # Calculate min/max excluding NaN values
+        # For drought frequency and longest spell, calculate dynamic vmin/vmax based on actual data range
+        # This makes the colormap more informative when actual values vary significantly from the default
+        if stat_key in ["dfreq", "maxspell"]:
             valid_data = spi_data[~np.isnan(spi_data)]
             if len(valid_data) > 0:
                 data_min = float(np.nanmin(valid_data))
@@ -748,10 +747,14 @@ def server(input, output, session) -> None:
                 # Add small padding (5% of range) to avoid edge clipping
                 data_range = data_max - data_min
                 padding = data_range * 0.05 if data_range > 0 else 1.0
-                dynamic_vmin = max(0, data_min - padding)  # Don't go below 0 for percentage
-                dynamic_vmax = min(100, data_max + padding)  # Cap at 100 for percentage (not 40!)
+                dynamic_vmin = max(0, data_min - padding)  # Don't go below 0
+                # For maxspell, cap at 730 days (2 years) to preserve variability on the lower side
+                if stat_key == "maxspell":
+                    dynamic_vmax = min(730, data_max + padding)  # Cap at 2 years
+                else:
+                    dynamic_vmax = data_max + padding  # No cap for dfreq
             else:
-                dynamic_vmin, dynamic_vmax = 0, 100
+                dynamic_vmin, dynamic_vmax = stat["vmin"], stat["vmax"]
         else:
             dynamic_vmin, dynamic_vmax = stat["vmin"], stat["vmax"]
 
@@ -988,9 +991,9 @@ def server(input, output, session) -> None:
             mhm_smi_data, SMI_STAT_DATA_BY_THRESH["mHM"].get(smi_thresh, {}).get("mean"), decade_year
         )
 
-        # For drought frequency, calculate dynamic vmin/vmax based on actual data range
-        # This makes the colormap more informative when actual values vary significantly
-        if stat_key == "dfreq":
+        # For drought frequency and longest spell, calculate dynamic vmin/vmax based on actual data range
+        # This makes the colormap more informative when actual values vary significantly from the default
+        if stat_key in ["dfreq", "maxspell"]:
             # Calculate min/max from both models (excluding NaN values)
             all_valid = np.concatenate([
                 clm5_smi_data[~np.isnan(clm5_smi_data)],
@@ -1002,15 +1005,16 @@ def server(input, output, session) -> None:
                 # Add small padding (5% of range) to avoid edge clipping
                 data_range = data_max - data_min
                 padding = data_range * 0.05 if data_range > 0 else 1.0
-                dynamic_vmin = max(0, data_min - padding)  # Don't go below 0 for percentage
-                dynamic_vmax = min(100, data_max + padding)  # Cap at 100 for percentage (not 40!)
-                print(f"DEBUG SMI dfreq: data_min={data_min:.2f}, data_max={data_max:.2f}, dynamic_vmin={dynamic_vmin:.2f}, dynamic_vmax={dynamic_vmax:.2f}")
+                dynamic_vmin = max(0, data_min - padding)  # Don't go below 0
+                # For maxspell, cap at 730 days (2 years) to preserve variability on the lower side
+                if stat_key == "maxspell":
+                    dynamic_vmax = min(730, data_max + padding)  # Cap at 2 years
+                else:
+                    dynamic_vmax = data_max + padding  # No cap for dfreq
             else:
-                dynamic_vmin, dynamic_vmax = 0, 100
-                print(f"DEBUG SMI dfreq: No valid data, using defaults 0, 100")
+                dynamic_vmin, dynamic_vmax = stat["vmin"], stat["vmax"]
         else:
             dynamic_vmin, dynamic_vmax = stat["vmin"], stat["vmax"]
-            print(f"DEBUG SMI {stat_key}: using static vmin={dynamic_vmin}, vmax={dynamic_vmax}")
 
         # Create fresh map instance (required by Shiny's matplotlib backend)
         # Always use horizontal colorbar for all Agricultural statistics (uniform layout)
