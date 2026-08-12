@@ -9,6 +9,7 @@ from datetime import date, timedelta
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
 import numpy as np
+import re
 from shared import (
     SMI_lat,
     SMI_lon,
@@ -45,6 +46,14 @@ MODEL_LABELS = {
 # Per-statistic plotting configuration for the meteorological (SPI) map.
 # `scale` is applied to the raw field before plotting (e.g. fraction → %).
 # `meaning` is a plain-language clause used to build the plot caption.
+
+# SPI threshold severity descriptions for text captions
+SPI_THRESHOLD_LABELS = {
+    -1.0: "Abnormally dry or worse",
+    -1.5: "Moderate drought or worse",
+    -2.0: "Severe drought or worse",
+}
+
 SPI_STATISTICS = {
     "mean": {
         "label": "Mean index",
@@ -55,7 +64,7 @@ SPI_STATISTICS = {
         "scale": 1.0,
         "cbar_label": "Mean SPI (dimensionless)",
         "meaning": (
-            "the decadal average of the 92-day SPI. Values below zero mark "
+            "The decadal average of the 92-day SPI. Values below zero mark "
             "drier-than-average conditions, but the decadal mean smooths over "
             "individual dry and wet spells and is hard to interpret on its own"
         ),
@@ -69,7 +78,7 @@ SPI_STATISTICS = {
         "scale": 100.0,
         "cbar_label": "Time in drought (%)",
         "meaning": (
-            "the share of time the 92-day SPI stayed at or below \u22121 "
+            "The share of time the 92-day SPI stayed at or below a threshold "
             "(moderate drought or worse); higher values mean drought conditions "
             "occurred more often during the decade"
         ),
@@ -83,7 +92,7 @@ SPI_STATISTICS = {
         "scale": 1.0,
         "cbar_label": "Minimum SPI reached",
         "meaning": (
-            "the most negative 92-day SPI reached during the decade — the single "
+            "The most negative 92-day SPI reached during the decade — the single "
             "most severe meteorological drought; more negative values indicate "
             "more extreme dry peaks"
         ),
@@ -97,8 +106,8 @@ SPI_STATISTICS = {
         "scale": 1.0,
         "cbar_label": "Longest spell (days)",
         "meaning": (
-            "the length of the longest uninterrupted period with the 92-day SPI "
-            "at or below \u22121; longer spells indicate more persistent drought"
+            "The length of the longest uninterrupted period with the 92-day SPI "
+            "at or below a threshold; longer spells indicate more persistent drought"
         ),
     },
 }
@@ -141,6 +150,14 @@ SMI_COLORS_ADJUSTED = [
 SMI_CMAP = ListedColormap(SMI_COLORS_ADJUSTED)
 SMI_NORM = BoundaryNorm(SMI_BREAKS, SMI_CMAP.N)
 
+# SMI threshold severity descriptions for text captions (lower SMI = drier)
+SMI_THRESHOLD_LABELS = {
+    0.0: "Exceptional drought or worse",
+    0.2: "Extreme drought or worse",
+    0.3: "Severe drought or worse",
+    0.5: "Moderate drought or worse",
+}
+
 # Per-statistic plotting configuration for the agricultural (SMI) maps.
 # SMI is a 0..1 soil-moisture index (0 = driest). Two hydrological models
 # (CLM5, mHM) are shown side by side, so there is no atmospheric-forcing choice.
@@ -154,6 +171,11 @@ SMI_STATISTICS = {
         "extend": "neither",  # No over/under colors needed
         "scale": 1.0,
         "cbar_label": "Mean SMI (dimensionless)",
+        "meaning": (
+            "The decadal average of soil moisture (SMI). Values closer to 0 indicate drier "
+            "conditions on average, while values closer to 1 indicate wetter conditions. "
+            "The mean smooths over individual dry and wet spells and represents overall moisture availability"
+        ),
     },
     "dfreq": {
         "label": "Drought frequency",
@@ -163,6 +185,11 @@ SMI_STATISTICS = {
         "extend": "max",
         "scale": 100.0,
         "cbar_label": "Time in drought (%)",
+        "meaning": (
+            "The share of time the soil moisture (SMI) stayed at or below a threshold "
+            "(moderate drought or worse); higher values mean drought conditions "
+            "occurred more often during the decade"
+        ),
     },
     "min": {
         "label": "Peak severity",
@@ -173,6 +200,10 @@ SMI_STATISTICS = {
         "extend": "neither",
         "scale": 1.0,
         "cbar_label": "Minimum SMI reached",
+        "meaning": (
+            "The lowest soil moisture (SMI) value reached during the decade — the single "
+            "most severe agricultural drought; lower values indicate more extreme dry conditions"
+        ),
     },
     "maxspell": {
         "label": "Longest dry spell",
@@ -182,6 +213,10 @@ SMI_STATISTICS = {
         "extend": "max",
         "scale": 1.0,
         "cbar_label": "Longest spell (days)",
+        "meaning": (
+            "The length of the longest uninterrupted period with soil moisture (SMI) "
+            "at or below a threshold; longer spells indicate more persistent drought"
+        ),
     },
 }
 
@@ -297,11 +332,26 @@ page_droughts = ui.page_fluid(
         ui.navset_card_pill(
             ui.nav_panel(
                 "Meteorological",
-                ui.output_plot("render_spi_map", height="600px"),
-                ui.output_ui("spi_caption"),
+                ui.row(
+                    ui.column(
+                        9,  # 7/12 ≈ 58% width
+                        ui.output_plot("render_spi_map", height="600px"),
+                        style="margin: 0 auto;",  # Center the column
+                    ),
+                ),
+            ui.output_ui("spi_caption"),
             ),
             ui.nav_panel(
-                "Agricultural", ui.output_plot("render_eu3_map", height="800px")
+                "Agricultural",
+                ui.row(
+                    ui.column(
+                        11,
+                        ui.output_plot("render_eu3_map", height="650px"),
+
+                        style="margin: 0 auto;"
+                    ),
+                ),
+                ui.output_ui("smi_caption"),
             ),
             ui.nav_panel(
                 "Hydrological",
@@ -575,28 +625,37 @@ def server(input, output, session) -> None:
     @render.ui
     def dynamic_threshold_slider():
         """Dynamically show threshold slider based on active tab and statistic.
-        
+
         - mean: No threshold (mean index value)
         - min (peak severity): No threshold (minimum value reached)
         - dfreq, maxspell: Show threshold (depends on threshold for counting)
         """
         stat_key = input.statistic()
         active_tab = input.drought_tab()  # Get active tab from navset
-        
+
         # Statistics that don't use thresholds
         if stat_key in ["mean", "min"]:
             return None
-        
+
         # Show threshold based on active tab (for dfreq and maxspell)
         if active_tab == "Meteorological":
-            # Show SPI threshold
+            # Show SPI threshold as a slider with discrete steps
             if SPI_THRESHOLDS:
+                # Calculate step size from available thresholds (e.g., -2, -1.5, -1 = step of 0.5)
+                if len(SPI_THRESHOLDS) >= 2:
+                    step_size = SPI_THRESHOLDS[1] - SPI_THRESHOLDS[0]
+                else:
+                    step_size = 0.5
+
                 return ui.div(
-                    ui.input_select(
+                    ui.input_slider(
                         "spi_thresh",
                         "SPI threshold",
-                        choices={t: f"SPI ≤ {t}" for t in sorted(SPI_THRESHOLDS)},
-                        selected=str(DEFAULT_SPI_THRESH) if DEFAULT_SPI_THRESH is not None else "-1.0",
+                        min=min(SPI_THRESHOLDS),
+                        max=max(SPI_THRESHOLDS),
+                        value=DEFAULT_SPI_THRESH if DEFAULT_SPI_THRESH is not None else -1.0,
+                        step=step_size,
+                        ticks=True,
                     )
                 )
         elif active_tab == "Agricultural":
@@ -613,12 +672,18 @@ def server(input, output, session) -> None:
                         ticks=True,
                     )
                 )
-        
+
         return None
 
     @render.plot
     def render_spi_map():
         from plots import EU1_map
+
+        # Check if we're on the Meteorological tab first
+        active_tab = input.drought_tab()
+        if active_tab != "Meteorological":
+            # Don't render if not on the correct tab
+            return _message_fig("Select the Meteorological tab to view SPI data.")
 
         decade_year = input.dec().year
         model = input.model()
@@ -638,8 +703,27 @@ def server(input, output, session) -> None:
                 "SPI latitude/longitude data not available – cannot draw map."
             )
 
-        # Get the SPI threshold (now a string from select input, convert to float)
-        spi_thresh = float(input.spi_thresh())
+        # Get the SPI threshold - handle case where slider doesn't exist (for 'mean' and 'min' stats)
+        # Use the first available threshold as fallback
+        selected_thresh = None
+
+        # Try to get the input value
+        try:
+            spi_thresh_val = input.spi_thresh()
+            if spi_thresh_val is not None:
+                selected_thresh = float(spi_thresh_val)
+        except (RuntimeError, TypeError, AttributeError):
+            # input.spi_thresh() doesn't exist yet
+            pass
+
+        # Fallback to first available threshold if we don't have a valid value
+        if selected_thresh is None or SPI_THRESHOLDS is None or len(SPI_THRESHOLDS) == 0:
+            selected_thresh = SPI_THRESHOLDS[0] if SPI_THRESHOLDS else -1.0
+        else:
+            # Find the nearest available threshold
+            selected_thresh = min(SPI_THRESHOLDS, key=lambda t: abs(t - selected_thresh))
+
+        spi_thresh = selected_thresh
         stat_data = SPI_STAT_DATA.get(DEFAULT_SPI_AGG, {}).get(spi_thresh, {}).get(stat_key, {})
         if not stat_data:
             return _message_fig(
@@ -652,6 +736,24 @@ def server(input, output, session) -> None:
 
         spi_data = stat_data[decade_year] * stat["scale"]
         spi_data = _blank_ocean(spi_data, SPI_STAT_DATA.get(DEFAULT_SPI_AGG, {}).get(spi_thresh, {}).get("mean"), decade_year)
+
+        # For drought frequency, calculate dynamic vmin/vmax based on actual data range
+        # This makes the colormap more informative when actual values vary significantly
+        if stat_key == "dfreq":
+            # Calculate min/max excluding NaN values
+            valid_data = spi_data[~np.isnan(spi_data)]
+            if len(valid_data) > 0:
+                data_min = float(np.nanmin(valid_data))
+                data_max = float(np.nanmax(valid_data))
+                # Add small padding (5% of range) to avoid edge clipping
+                data_range = data_max - data_min
+                padding = data_range * 0.05 if data_range > 0 else 1.0
+                dynamic_vmin = max(0, data_min - padding)  # Don't go below 0 for percentage
+                dynamic_vmax = min(100, data_max + padding)  # Cap at 100 for percentage (not 40!)
+            else:
+                dynamic_vmin, dynamic_vmax = 0, 100
+        else:
+            dynamic_vmin, dynamic_vmax = stat["vmin"], stat["vmax"]
 
         spi_map = EU1_map(
             suptitle=f"Meteorological drought \u2014 {stat['label']}",
@@ -704,8 +806,8 @@ def server(input, output, session) -> None:
             lat_grid,
             spi_data,
             cmap=stat["cmap"],
-            vmin=stat["vmin"],
-            vmax=stat["vmax"],
+            vmin=dynamic_vmin,
+            vmax=dynamic_vmax,
             alpha=0.85,
         )
         spi_map.colorbar(
@@ -729,7 +831,7 @@ def server(input, output, session) -> None:
                 "available. Select \u201cERA5\u201d to view the maps."
             )
         else:
-            # selected_thresh is now a string from the select input, convert to float
+            # spi_thresh is now a float from the slider input
             spi_thresh = float(input.spi_thresh())
             stat_data = SPI_STAT_DATA.get(DEFAULT_SPI_AGG, {}).get(spi_thresh, {}).get(stat_key, {})
             shown_year = (
@@ -737,35 +839,134 @@ def server(input, output, session) -> None:
                 if decade_year in stat_data or not stat_data
                 else min(stat_data.keys())
             )
+
+            # Build the meaning text with the actual threshold value for dfreq and maxspell
+            if stat_key in ["dfreq", "maxspell"]:
+                base_meaning = stat['meaning'].replace("a threshold", f"{spi_thresh}")
+                # Replace the parenthetical severity description based on threshold
+                if spi_thresh in SPI_THRESHOLD_LABELS:
+                    base_meaning = re.sub(
+                        r'\(.*?or worse\)',
+                        f"({SPI_THRESHOLD_LABELS[spi_thresh]})",
+                        base_meaning
+                    )
+            else:
+                base_meaning = stat['meaning']
+
+            # Enhanced caption with bold highlights for key facts
             text = (
-                f"Showing the {stat['label'].lower()} of meteorological "
-                "drought, derived from the Standardized Precipitation Index "
-                "(SPI, 92-day accumulation) forced by "
-                f"{model_label}, for the decade "
-                f"{shown_year}\u2013{shown_year + 9}. The map shows "
-                f"{stat['meaning']}. All indices are computed relative to the "
-                "1960\u20131999 reference period."
+                f"<strong>{stat['label'].upper()}</strong> of meteorological drought "
+                f"({decade_year}–{decade_year + 9}).<br><br>"
+                f"<strong>Statistic:</strong> {stat['label']}<br>"
+                f"<strong>Threshold:</strong> SPI ≤ {spi_thresh:.1f}<br>"
+                f"<strong>Reference period:</strong> 1960–1999<br><br>"
+                f"{base_meaning}."
             )
 
-        return ui.div(
-            text,
-            style=(
-                "text-align: left; color: #aaa; font-size: 0.85em; "
-                "line-height: 1.5; padding: 10px 4px 2px 4px;"
-            ),
+        return ui.HTML(
+            f"<div style='text-align: left; color: #bbb; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(255,255,255,0.05); border-radius: 5px;'>{text}</div>"
+        )
+
+    @render.ui
+    def smi_caption():
+        """Dynamic caption for SMI (Agricultural) tab with threshold descriptions."""
+        stat_key = input.statistic()
+        stat = SMI_STATISTICS.get(stat_key, SMI_STATISTICS["mean"])
+        decade_year = input.dec().year
+
+        # Get the SMI threshold - handle case where slider doesn't exist (for 'mean' and 'min' stats)
+        selected_thresh = None
+        try:
+            smi_thresh_val = input.smi_thresh()
+            if smi_thresh_val is not None:
+                selected_thresh = float(smi_thresh_val)
+        except (RuntimeError, TypeError, AttributeError):
+            pass
+
+        # Fallback to first available threshold
+        if selected_thresh is None or SMI_THRESHOLDS is None or len(SMI_THRESHOLDS) == 0:
+            selected_thresh = SMI_THRESHOLDS[0] if SMI_THRESHOLDS else 0.2
+        else:
+            selected_thresh = min(SMI_THRESHOLDS, key=lambda t: abs(t - selected_thresh))
+
+        # Build the meaning text with the actual threshold value for dfreq and maxspell
+        if stat_key in ["dfreq", "maxspell"]:
+            base_meaning = stat['meaning'].replace("a threshold", f"{selected_thresh}")
+            # Replace the parenthetical severity description based on threshold
+            if selected_thresh in SMI_THRESHOLD_LABELS:
+                base_meaning = re.sub(
+                    r'\(.*?or worse\)',
+                    f"({SMI_THRESHOLD_LABELS[selected_thresh]})",
+                    base_meaning
+                )
+        else:
+            base_meaning = stat['meaning']
+
+        # Check if data is available for this threshold and statistic
+        clm5_stat = SMI_STAT_DATA_BY_THRESH["CLM5"].get(selected_thresh, {}).get(stat_key)
+        if not clm5_stat:
+            text = (
+                f'The "{stat["label"]}" statistic is not available for the "{selected_thresh}" '
+                "SMI threshold."
+            )
+        else:
+            # Find shown year
+            if decade_year in clm5_stat:
+                shown_year = decade_year
+            elif clm5_stat:
+                shown_year = min(clm5_stat.keys())
+            else:
+                shown_year = decade_year
+
+            # Enhanced caption with bold highlights for key facts
+            text = (
+                f"<strong>{stat['label'].upper()}</strong> of agricultural drought "
+                f"({decade_year}–{decade_year + 9}).<br><br>"
+                f"<strong>Statistic:</strong> {stat['label']}<br>"
+                f"<strong>Threshold:</strong> SMI ≤ {selected_thresh:.1f}<br>"
+                f"<strong>Reference period:</strong> 1960–1999<br><br>"
+                f"{base_meaning}."
+            )
+
+        return ui.HTML(
+            f"<div style='text-align: left; color: #bbb; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(255,255,255,0.05); border-radius: 5px;'>{text}</div>"
         )
 
     @render.plot
     def render_eu3_map():
         from plots import EU3_map
 
+        # Check if we're on the Agricultural tab first
+        active_tab = input.drought_tab()
+        if active_tab != "Agricultural":
+            # Don't render if not on the correct tab
+            return _message_fig("Select the Agricultural tab to view SMI data.")
+
         stat_key = input.statistic()
         stat = SMI_STATISTICS.get(stat_key, SMI_STATISTICS["mean"])
         decade_year = input.dec().year
 
-        # Map the slider value to the nearest available threshold (floats can be imprecise)
-        selected_thresh = float(input.smi_thresh())
-        smi_thresh = min(SMI_THRESHOLDS, key=lambda t: abs(t - selected_thresh)) if SMI_THRESHOLDS else selected_thresh
+        # Get the SMI threshold - handle case where slider doesn't exist (for 'mean' and 'min' stats)
+        # Use the first available threshold as fallback
+        selected_thresh = None
+
+        # Try to get the input value
+        try:
+            smi_thresh_val = input.smi_thresh()
+            if smi_thresh_val is not None:
+                selected_thresh = float(smi_thresh_val)
+        except (RuntimeError, TypeError, AttributeError):
+            # input.smi_thresh() doesn't exist yet
+            pass
+
+        # Fallback to first available threshold if we don't have a valid value
+        if selected_thresh is None or SMI_THRESHOLDS is None or len(SMI_THRESHOLDS) == 0:
+            selected_thresh = SMI_THRESHOLDS[0] if SMI_THRESHOLDS else 0.2
+        else:
+            # Find the nearest available threshold
+            selected_thresh = min(SMI_THRESHOLDS, key=lambda t: abs(t - selected_thresh))
+
+        smi_thresh = selected_thresh
         clm5_stat = SMI_STAT_DATA_BY_THRESH["CLM5"].get(smi_thresh, {}).get(stat_key)
         mhm_stat = SMI_STAT_DATA_BY_THRESH["mHM"].get(smi_thresh, {}).get(stat_key)
         if not clm5_stat or not mhm_stat:
@@ -787,9 +988,33 @@ def server(input, output, session) -> None:
             mhm_smi_data, SMI_STAT_DATA_BY_THRESH["mHM"].get(smi_thresh, {}).get("mean"), decade_year
         )
 
+        # For drought frequency, calculate dynamic vmin/vmax based on actual data range
+        # This makes the colormap more informative when actual values vary significantly
+        if stat_key == "dfreq":
+            # Calculate min/max from both models (excluding NaN values)
+            all_valid = np.concatenate([
+                clm5_smi_data[~np.isnan(clm5_smi_data)],
+                mhm_smi_data[~np.isnan(mhm_smi_data)]
+            ])
+            if len(all_valid) > 0:
+                data_min = float(np.nanmin(all_valid))
+                data_max = float(np.nanmax(all_valid))
+                # Add small padding (5% of range) to avoid edge clipping
+                data_range = data_max - data_min
+                padding = data_range * 0.05 if data_range > 0 else 1.0
+                dynamic_vmin = max(0, data_min - padding)  # Don't go below 0 for percentage
+                dynamic_vmax = min(100, data_max + padding)  # Cap at 100 for percentage (not 40!)
+                print(f"DEBUG SMI dfreq: data_min={data_min:.2f}, data_max={data_max:.2f}, dynamic_vmin={dynamic_vmin:.2f}, dynamic_vmax={dynamic_vmax:.2f}")
+            else:
+                dynamic_vmin, dynamic_vmax = 0, 100
+                print(f"DEBUG SMI dfreq: No valid data, using defaults 0, 100")
+        else:
+            dynamic_vmin, dynamic_vmax = stat["vmin"], stat["vmax"]
+            print(f"DEBUG SMI {stat_key}: using static vmin={dynamic_vmin}, vmax={dynamic_vmax}")
+
         # Create fresh map instance (required by Shiny's matplotlib backend)
-        # Use horizontal colorbar for SMI mean and min statistics
-        use_horizontal_cbar = stat_key in ["mean", "min"]
+        # Always use horizontal colorbar for all Agricultural statistics (uniform layout)
+        use_horizontal_cbar = True  # All SMI statistics now use horizontal colorbar at bottom
         eu_map_instance = EU3_map(
             suptitle=(
                 f"Soil moisture (SMI) — {stat['label'].lower()}, "
@@ -814,9 +1039,9 @@ def server(input, output, session) -> None:
             if "norm" in stat:
                 pcolormesh_kwargs["norm"] = stat["norm"]
             else:
-                pcolormesh_kwargs["vmin"] = stat["vmin"]
-                pcolormesh_kwargs["vmax"] = stat["vmax"]
-            
+                pcolormesh_kwargs["vmin"] = dynamic_vmin
+                pcolormesh_kwargs["vmax"] = dynamic_vmax
+
             eu_map_instance.pcolormesh(
                 SMI_lon,
                 SMI_lat,
@@ -831,7 +1056,7 @@ def server(input, output, session) -> None:
                 ax_num=1,
                 **pcolormesh_kwargs
             )
-            
+
             # Add colorbar using EU3_map.colorbar() method
             # For SMI mean and min statistics with custom norm, use special colorbar
             if stat_key in ["mean", "min"] and "norm" in stat:
@@ -849,36 +1074,41 @@ def server(input, output, session) -> None:
                     "Extreme\nwetness",
                     "Exceptional\nwetness"
                 ]
-                
+
                 eu_map_instance.colorbar(
                     eu_map_instance.pcolormesh_obj,
-                    cbar_label=stat["cbar_label"],
+                    cbar_label="",  # Remove colorbar label
                     extend=stat["extend"],
                     horizontal=True,
                 )
-                
+
                 # Update colorbar ticks and labels after creation
                 cbar = eu_map_instance.cbar
                 if cbar is not None:
-                    cbar.set_label(stat["cbar_label"], color=theme_config.colors["text"])
                     cbar.set_ticks(midpoints)
                     cbar.set_ticklabels(labels)
-                    
-                    # Set tick label color and font size (smaller for long labels)
+
+                    # Set tick label color to white and increase font size
                     for tick in cbar.ax.get_xticklabels():
-                        tick.set_color(theme_config.colors["text"])
-                        tick.set_fontsize(6)
-                    
-                    # Hide tick lines (only show the labels at midpoints)
-                    cbar.ax.tick_params(axis='x', which='both', bottom=False, top=False, length=0)
+                        tick.set_color("white")
+                        tick.set_fontsize(8)
+
+                    # Show tick labels explicitly and adjust positioning
+                    cbar.ax.tick_params(axis='x', which='both',
+                                       labelbottom=True, bottom=False, top=False,
+                                       labelsize=8, colors='white')
+
+                    # Ensure labels are visible above the colorbar
+                    cbar.ax.tick_params(axis='x', pad=15)
             else:
+                # All other statistics (dfreq, maxspell) use horizontal colorbar with standard label
                 eu_map_instance.colorbar(
                     eu_map_instance.pcolormesh_obj,
                     cbar_label=stat["cbar_label"],
                     extend=stat["extend"],
-                    horizontal=use_horizontal_cbar,
+                    horizontal=True,  # Always horizontal for Agricultural section
                 )
-        
+
         return fig
 
     @render.plot
