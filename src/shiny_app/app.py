@@ -33,6 +33,16 @@ from shiny.types import ImgData
 from shinyswatch import theme
 from theme_config import GOOGLE_FONTS_URL, get_theme_config
 
+# Try to import R integration for drought hydrograph
+try:
+    from drought_hydrograph_r import create_drought_hydrograph_image, drought_hydrograph_r_available
+    R_AVAILABLE = drought_hydrograph_r_available()
+except ImportError:
+    R_AVAILABLE = False
+    # Provide a dummy function for fallback
+    def create_drought_hydrograph_image(*args, **kwargs):
+        return None
+
 dark_theme = theme.darkly
 
 # Atmospheric-forcing display labels (shared by the map and its caption).
@@ -356,11 +366,11 @@ page_droughts = ui.page_fluid(
             ui.nav_panel(
                 "Hydrological",
                 ui.p(
-                    "Click a gauge marker to view its discharge time series.",
+                    "Click a gauge marker to view its drought hydrograph.",
                     style="text-align:left; color:#888; margin-bottom:6px;",
                 ),
                 ui.HTML(gauge_map_html),
-                ui.output_plot("discharge_plot", height="320px"),
+                ui.output_ui("drought_hydrograph_container"),
             ),
             id="drought_tab",  # Add id to detect active tab
             title="Drought occurence",  # Tab set title
@@ -1194,6 +1204,66 @@ def server(input, output, session) -> None:
         ax.grid(True, color=c["border"], alpha=0.3, linewidth=0.5)
         fig.tight_layout()
         return fig
+
+    @render.image
+    def drought_hydrograph():
+        """Render R-generated drought hydrograph for the clicked gauge.
+        
+        Uses drought_hydrograph_r.py to generate a plot from monthly discharge data
+        and return it as an image. Falls back to discharge_plot if R is not available.
+        """
+        # selected_gauge is injected by the Leaflet JS via Shiny.setInputValue;
+        # it doesn't exist until the user clicks, so guard against that.
+        try:
+            gauge_id = input.selected_gauge()
+        except Exception:
+            return None
+        if not gauge_id:
+            return None
+        
+        # Get decade year from the slider
+        try:
+            dec_date = input.dec()
+            decade_year = dec_date.year
+        except Exception:
+            decade_year = 1960
+        
+        # Generate drought hydrograph using R
+        if R_AVAILABLE:
+            img_data = create_drought_hydrograph_image(gauge_id, decade_year, persistence=1)
+            return img_data
+        else:
+            # Fallback: return None if R is not available
+            return None
+
+    @render.ui
+    def drought_hydrograph_container():
+        """Dynamically render drought hydrograph or fallback plot based on R availability."""
+        # selected_gauge is injected by the Leaflet JS via Shiny.setInputValue;
+        # it doesn't exist until the user clicks, so guard against that.
+        try:
+            gauge_id = input.selected_gauge()
+        except Exception:
+            return ui.markdown("*Click a gauge marker to view its hydrograph.*")
+        if not gauge_id:
+            return ui.markdown("*Click a gauge marker to view its hydrograph.*")
+        
+        if R_AVAILABLE:
+            return ui.output_image("drought_hydrograph", inline=True)
+        else:
+            # Show fallback message explaining R is not available
+            return ui.div(
+                ui.output_plot("discharge_plot", height="320px"),
+                ui.p(
+                    ui.tags.strong("Drought hydrograph (R-based) is not available."),
+                    ui.p(
+                        "To enable the advanced drought analysis visualization, install rpy2: ",
+                        ui.code("pip install rpy2"),
+                        "\n Then restart the app."
+                    ),
+                    style="margin-top: 10px; padding: 10px; background: rgba(240, 173, 78, 0.1); border-radius: 4px;"
+                )
+            )
 
     @render.image
     def image():
