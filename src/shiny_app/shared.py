@@ -167,7 +167,7 @@ if DEFAULT_SMI_THRESH is not None:
 
 _streamflow_dir = data_dir / "streamflow"
 _discharge_path = _streamflow_dir / "discharge.nc"
-_gauge_csv_path = _streamflow_dir / "grdc_iriscc_subset_lite.csv"
+_gauge_csv_path = _streamflow_dir / "grdc_iriscc_pass2_subset_extended.csv"
 
 _base_dt = datetime(1950, 1, 1)
 
@@ -327,6 +327,17 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
             weight:     0.5
           }}
         }}).addTo(map);
+      }})
+      .catch(function (err) {{
+        console.warn('Basemap land layer not available:', err.message);
+        // Fallback: draw simplified Europe outline
+        var europeOutline = [[71, -25], [71, 40], [35, 40], [35, -25], [71, -25]];
+        L.polygon(europeOutline, {{
+          fillColor: '#636363',
+          fillOpacity: 0.2,
+          color: '#999',
+          weight: 1
+        }}).addTo(map).bindTooltip('Land layer unavailable', {{permanent: true, direction: 'center'}});
       }});
 
     // Major lakes (50 m) – paint them in ocean colour so they read as water.
@@ -341,6 +352,9 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
             weight:     0.4
           }}
         }}).addTo(map);
+      }})
+      .catch(function (err) {{
+        console.warn('Basemap lakes layer not available:', err.message);
       }});
 
     data.forEach(function (g) {{

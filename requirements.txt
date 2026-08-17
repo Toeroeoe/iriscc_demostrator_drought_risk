@@ -12,3 +12,4 @@ seaborn==0.13.2
 ipyleaflet==0.20.0
 cartopy==0.23.0
 xarray==2024.7.0
+scipy==1.17.1
