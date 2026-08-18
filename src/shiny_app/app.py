@@ -1202,7 +1202,7 @@ def server(input, output, session) -> None:
             fontsize=10,
         )
         ax.grid(True, color=c["border"], alpha=0.3, linewidth=0.5)
-        fig.tight_layout()
+        # Simple plot doesn't need tight_layout; matplotlib handles layout fine
         return fig
 
     @render.plot

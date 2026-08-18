@@ -134,7 +134,6 @@ def _create_main_plot(ax, dec_df, s10_x, s10_y, s50_x, s50_y, hydro_x, hydro_y, 
     
     # Use the larger of hydrograph max or threshold max
     y_max = max(hydro_max, threshold_max) * 1.1  # 10% headroom
-    print(f"DEBUG: Setting ylim to (0, {y_max:.2f}) - hydro_max={hydro_max:.2f}, threshold_max={threshold_max:.2f}")
     ax.set_ylim(0, y_max)
     year_breaks = np.array(decade) - min(decade)
     ax.set_xticks(year_breaks)
