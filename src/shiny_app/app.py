@@ -371,6 +371,7 @@ page_droughts = ui.page_fluid(
                 ),
                 ui.HTML(gauge_map_html),
                 ui.output_ui("drought_hydrograph_container"),
+                ui.output_ui("drought_hydrograph_caption"),
             ),
             id="drought_tab",  # Add id to detect active tab
             title="Drought occurence",  # Tab set title
@@ -1189,20 +1190,41 @@ def server(input, output, session) -> None:
                 label="Simulated",
             )
 
-        ax.set_title(title, color=c["text"], fontsize=12, pad=8)
-        ax.set_ylabel("Discharge (m\u00b3 s\u207b\u00b9)", color=c["text"])
-        ax.set_xlabel("Date", color=c["text"])
-        ax.tick_params(colors=c["text"])
+        ax.set_title(
+            title, 
+            color=c["text"], 
+            fontsize=12, 
+            pad=8,
+            family=tc.get_font_family('heading')
+        )
+        ax.set_ylabel(
+            "Discharge (m³ s⁻¹)", 
+            color=c["text"],
+            fontsize=tc.font_sizes['base'],
+            family=tc.get_font_family('body')
+        )
+        ax.set_xlabel(
+            "Date", 
+            color=c["text"],
+            fontsize=tc.font_sizes['base'],
+            family=tc.get_font_family('body')
+        )
+        ax.tick_params(colors=c["text"], labelsize=tc.font_sizes['small'])
+        
+        # Hide spines for modern look
         for spine in ax.spines.values():
-            spine.set_edgecolor(c["border"])
+            spine.set_visible(False)
         ax.legend(
             facecolor=c["background"],
             edgecolor=c["border"],
             labelcolor=c["text"],
-            fontsize=10,
+            fontsize=tc.font_sizes['small'],
+            family=tc.get_font_family('body'),
+            framealpha=0.9
         )
         ax.grid(True, color=c["border"], alpha=0.3, linewidth=0.5)
-        # Simple plot doesn't need tight_layout; matplotlib handles layout fine
+        # Prevent Shiny from calling tight_layout which can cause issues
+        fig.tight_layout = lambda *a, **kw: None
         return fig
 
     @render.plot
@@ -1239,6 +1261,67 @@ def server(input, output, session) -> None:
             import traceback
             traceback.print_exc()
             return None
+
+    @render.ui
+    def drought_hydrograph_caption():
+        """Dynamic caption for drought hydrograph with detailed information."""
+        # Get theme colors
+        tc = get_theme_config("dark")
+        c = tc.colors
+        
+        # selected_gauge is injected by the Leaflet JS via Shiny.setInputValue
+        try:
+            gauge_id = input.selected_gauge()
+        except Exception:
+            return None
+        if not gauge_id:
+            return None
+        
+        # Get decade year from the slider
+        try:
+            dec_date = input.dec()
+            decade_year = dec_date.year
+        except Exception:
+            decade_year = 1960  # default
+        
+        # Get gauge metadata for station name
+        row = gauge_meta.loc[gauge_meta["gauge_id"] == gauge_id]
+        if not row.empty:
+            r = row.iloc[0]
+            station_name = r.get('station', 'Unknown Station')
+            river_name = r.get('river', 'Unknown River')
+            country = r.get('country', 'Unknown Country')
+        else:
+            station_name = gauge_id
+            river_name = "Unknown River"
+            country = "Unknown Country"
+        
+        # Build the descriptive text
+        text = (
+            f"<strong>MONTHLY HYDROLOGICAL DROUGHT ANALYSIS</strong><br><br>"
+            f"<strong>Station:</strong> {station_name} ({gauge_id})<br>"
+            f"<strong>River:</strong> {river_name}<br>"
+            f"<strong>Country:</strong> {country}<br>"
+            f"<strong>Period:</strong> {decade_year}–{decade_year + 9}<br><br>"
+            f"This drought hydrograph shows the monthly streamflow (blue line) for the selected gauge "
+            f"over the decade, overlaid with two drought threshold curves (orange shading):<br>"
+            f"• <strong style='color: {c['warning']};'>10-year return period threshold</strong> (Q10): "
+            f"Streamflow values below this threshold occur approximately once every 10 years on average. "
+            f"Areas shaded in light orange indicate months where streamflow fell below this threshold.<br>"
+            f"• <strong style='color: {c['danger']};'>50-year return period threshold</strong> (Q50): "
+            f"Streamflow values below this threshold occur approximately once every 50 years on average, "
+            f"representing exceptional drought conditions. Darker orange shading indicates these extreme events.<br><br>"
+            f"The inset plots provide additional insights:<br>"
+            f"• <strong>Total drought events:</strong> Number of months below each threshold over the full decade<br>"
+            f"• <strong>Monthly distribution:</strong> When during the year drought events occurred<br><br>"
+            f"<strong>Reference period:</strong> 1960–1999 (thresholds calculated relative to this baseline)"
+        )
+        
+        return ui.HTML(
+            f"<div style='text-align: left; color: #bbb; font-size: 14px; line-height: 1.6; "
+            f"padding: 10px 15px 15px 15px; background-color: rgba(255,255,255,0.05); "
+            f"border-radius: 6px; border-left: 3px solid {c['primary']};'>{text}</div>"
+        )
 
     @render.ui
     def drought_hydrograph_container():
