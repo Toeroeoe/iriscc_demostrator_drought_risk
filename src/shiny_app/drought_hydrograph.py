@@ -422,6 +422,7 @@ def create_drought_hydrograph(gauge_id, decade_year=None, persistence=1):
     FS_TITLE = theme_config.font_sizes['title']  # 20px
     FS_HEADING = theme_config.font_sizes['heading']  # 24px
     FS_LEGEND = theme_config.font_sizes['small']  # 12px - for legend
+    FS_LEGEND = theme_config.font_sizes['small']  # 12px - for legend
 
     # Create figure with more spacious layout
     fig = plt.figure(figsize=(14, 14), facecolor=COL_BG)
