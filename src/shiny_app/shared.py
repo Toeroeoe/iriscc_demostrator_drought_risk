@@ -258,7 +258,7 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
 
     return f"""
 <div id="gauge-map"
-     style="height:900px; width:100%; border-radius:6px; overflow:hidden;">
+     style="height:450px; width:100%; max-width: 600px; margin: 0 auto; border-radius:6px; overflow:hidden;">
 </div>
 <style>
   .gauge-tooltip {{
@@ -293,6 +293,8 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
     weight: 2, opacity: 1, fillOpacity: 1
   }};
 
+  var map;
+
   function initMap() {{
     // EPSG:3035 LAEA Europe — true equal-area projection (EU standard).
     // Resolutions are in metres/pixel; the array index is the Leaflet zoom level.
@@ -302,7 +304,45 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
       {{ resolutions: [8000, 4000, 2000, 1000, 500, 250, 125, 62.5, 31.25] }}
     );
 
-    var map = L.map('gauge-map', {{ crs: laea, maxZoom: 8 }}).setView([54.0, 15.0], 1);
+    map = L.map('gauge-map', {{ crs: laea, maxZoom: 8 }});
+
+    // Calculate bounds from all markers and fit the map to show all of them
+    if (data.length > 0) {{
+      var bounds = L.latLngBounds(data.map(function(d) {{ return [d.lat, d.lon]; }}));
+      map.fitBounds(bounds, {{ padding: [50, 50] }});
+    }} else {{
+      map.setView([54.0, 15.0], 1);
+    }}
+
+    // Set up listener for station selector dropdown changes (using jQuery)
+    // This needs to be set up after map is created
+    $(document).on('change', '#station_select', function() {{
+      var gaugeId = $(this).val();
+      if (gaugeId) {{
+        // Find the marker with this gaugeId
+        map.eachLayer(function (layer) {{
+          if (layer.gaugeId === gaugeId) {{
+            // Activate this marker
+            if (active && active !== layer) active.setStyle(defaultStyle);
+            layer.setStyle(activeStyle);
+            active = layer;
+            // Set the selected_gauge input value
+            if (typeof Shiny !== 'undefined') {{
+              Shiny.setInputValue('selected_gauge', gaugeId, {{ priority: 'event' }});
+            }}
+            // Pan map to the marker
+            map.panTo([layer.getLatLng()]);
+          }}
+        }});
+      }}
+    }});
+
+    // Check if there's a default selection and apply it
+    if (typeof Shiny !== 'undefined' && $('#station_select').val()) {{
+      setTimeout(function() {{
+        $('#station_select').trigger('change');
+      }}, 100);  // Small delay to ensure map is fully initialized
+    }}
 
     // Ocean colour via CSS (no tile layer needed)
     document.getElementById('gauge-map').style.background = '#a6cee3';
@@ -361,6 +401,9 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
       var m = L.circleMarker([g.lat, g.lon],
                              Object.assign({{pane: 'gaugePane'}}, defaultStyle)).addTo(map);
 
+      // Store gauge ID on the marker for easy lookup
+      m.gaugeId = g.id;
+
       m.bindTooltip(
         '<b>' + g.station + '</b><br><i>' + g.river + '</i> &mdash; ' + g.country,
         {{ sticky: true, className: 'gauge-tooltip' }}
@@ -379,6 +422,8 @@ def _build_gauge_map_html(gauge_df: pd.DataFrame) -> str:
         if (typeof Shiny !== 'undefined') {{
           Shiny.setInputValue('selected_gauge', g.id, {{ priority: 'event' }});
         }}
+        // Also update the dropdown to match the selected station
+        $('#station_select').val(g.id).trigger('change');
       }});
     }});
   }}

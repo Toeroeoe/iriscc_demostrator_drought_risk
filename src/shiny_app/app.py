@@ -293,6 +293,7 @@ page_droughts = ui.page_fluid(
                     "text-align: left;"
                 ),
             ),
+            ui.output_ui("conditional_sidebar_controls"),
             ui.input_slider(
                 "dec",
                 "Decade",
@@ -302,17 +303,6 @@ page_droughts = ui.page_fluid(
                 step=timedelta(days=366 * 10),
                 time_format="%Y",
                 ticks=True,
-            ),
-            ui.input_select(
-                "statistic",
-                "Statistic",
-                choices={
-                    "dfreq": "Drought frequency",
-                    "maxspell": "Longest dry spell",
-                    "min": "Peak severity",
-                    "mean": "Mean index",
-                },
-                selected="dfreq",
             ),
             ui.output_ui("dynamic_threshold_slider"),
             ui.input_select(
@@ -366,15 +356,15 @@ page_droughts = ui.page_fluid(
             ui.nav_panel(
                 "Hydrological",
                 ui.p(
-                    "Click a gauge marker to view its drought hydrograph.",
+                    "Select a station using the dropdown in the sidebar or click on a gauge marker in the map to view its drought hydrograph.",
                     style="text-align:left; color:#888; margin-bottom:6px;",
                 ),
                 ui.HTML(gauge_map_html),
                 ui.output_ui("drought_hydrograph_container"),
                 ui.output_ui("drought_hydrograph_caption"),
             ),
-            id="drought_tab",  # Add id to detect active tab
-            title="Drought occurence",  # Tab set title
+            id="main_tab",  # Track active tab for conditional sidebar controls
+            title="Drought occurence",
         ),
         ui.navset_card_pill(
             ui.nav_panel("Crop yield", ""),
@@ -531,12 +521,70 @@ app_ui = ui.page_fluid(
                     /* Sidebar text */
                     .bslib-sidebar-layout .sidebar {
                         font-family: Inter, system-ui, -apple-system, sans-serif;
+                        transition: position 0.3s ease, top 0.3s ease;
+                    }
+                    
+                    /* Fixed sidebar class (applied via JS when scrolling past intro) */
+                    .bslib-sidebar-layout aside.sidebar.is-fixed {
+                        position: fixed !important;
+                        top: 20px;
+                        left: 20px;
+                        width: 300px;
+                        max-height: calc(100vh - 40px);
+                        overflow-y: auto;
+                        z-index: 100;
+                        background: #2a2a2a !important;
+                        border: 1px solid #444;
+                        border-radius: 6px;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                    }
+                    
+                    /* Add margin only when sidebar is fixed */
+                    .bslib-sidebar-layout.is-scrolled main .container,
+                    .bslib-sidebar-layout.is-scrolled main .row,
+                    .bslib-sidebar-layout.is-scrolled .page-body > .container {
+                        margin-left: 340px;
+                        padding-left: 20px;
                     }
 
                     /* Card text */
                     .card-body {
                         font-family: Inter, system-ui, -apple-system, sans-serif;
                     }
+                """),
+                # JavaScript for scroll-based sidebar behavior
+                ui.tags.script("""
+                document.addEventListener('DOMContentLoaded', function() {
+                    const sidebar = document.querySelector('.bslib-sidebar-layout aside.sidebar');
+                    const sidebarLayout = document.querySelector('.bslib-sidebar-layout');
+                    if (!sidebar || !sidebarLayout) return;
+                    
+                    const introSection = document.querySelector('.page-body') || document.querySelector('.main');
+                    if (!introSection) return;
+                    
+                    const triggerPoint = introSection.offsetHeight - 100;
+                    
+                    function handleScroll() {
+                        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+                        if (scrollTop > triggerPoint) {
+                            sidebar.classList.add('is-fixed');
+                            sidebarLayout.classList.add('is-scrolled');
+                        } else {
+                            sidebar.classList.remove('is-fixed');
+                            sidebarLayout.classList.remove('is-scrolled');
+                        }
+                    }
+                    
+                    window.addEventListener('scroll', handleScroll);
+                    
+                    document.querySelectorAll('.nav-link').forEach(link => {
+                        link.addEventListener('click', function() {
+                            setTimeout(handleScroll, 100);
+                        });
+                    });
+                    
+                    handleScroll();
+                });
                 """),
     ),
     ui.layout_columns(
@@ -641,8 +689,13 @@ def server(input, output, session) -> None:
         - min (peak severity): No threshold (minimum value reached)
         - dfreq, maxspell: Show threshold (depends on threshold for counting)
         """
+        active_tab = input.main_tab()
+        
+        # Only show threshold slider for Meteorological and Agricultural tabs
+        if active_tab not in ("Meteorological", "Agricultural"):
+            return None
+            
         stat_key = input.statistic()
-        active_tab = input.drought_tab()  # Get active tab from navset
 
         # Statistics that don't use thresholds
         if stat_key in ["mean", "min"]:
@@ -686,12 +739,54 @@ def server(input, output, session) -> None:
 
         return None
 
+    @render.ui
+    def conditional_sidebar_controls():
+        """Show different sidebar controls based on the active tab."""
+        active_tab = input.main_tab()
+        
+        if active_tab == "Hydrological":
+            # Show persistence slider and station selector for Hydrological tab
+            return ui.div(
+                ui.input_slider(
+                    "persistence",
+                    "Drought persistence (months)",
+                    min=1,
+                    max=12,
+                    value=1,
+                    step=1,
+                    ticks=False,
+                ),
+                ui.input_select(
+                    "station_select",
+                    "Select station",
+                    choices=dict(zip(gauge_meta["gauge_id"], gauge_meta["station"])),
+                    selected=gauge_meta["gauge_id"].iloc[0] if len(gauge_meta) > 0 else None,
+                ),
+            )
+        elif active_tab in ("Meteorological", "Agricultural"):
+            # Show statistic dropdown for Meteorological and Agricultural tabs
+            return ui.div(
+                ui.input_select(
+                    "statistic",
+                    "Statistic",
+                    choices={
+                        "dfreq": "Drought frequency",
+                        "maxspell": "Longest dry spell",
+                        "min": "Peak severity",
+                        "mean": "Mean index",
+                    },
+                    selected="dfreq",
+                ),
+            )
+        else:
+            return None
+
     @render.plot
     def render_spi_map():
         from plots import EU1_map
 
         # Check if we're on the Meteorological tab first
-        active_tab = input.drought_tab()
+        active_tab = input.main_tab()
         if active_tab != "Meteorological":
             # Don't render if not on the correct tab
             return _message_fig("Select the Meteorological tab to view SPI data.")
@@ -833,6 +928,10 @@ def server(input, output, session) -> None:
 
     @render.ui
     def spi_caption():
+        # Only show caption on Meteorological tab
+        if input.main_tab() != "Meteorological":
+            return None
+            
         decade_year = input.dec().year
         model = input.model()
         stat_key = input.statistic()
@@ -884,6 +983,10 @@ def server(input, output, session) -> None:
     @render.ui
     def smi_caption():
         """Dynamic caption for SMI (Agricultural) tab with threshold descriptions."""
+        # Only show caption on Agricultural tab
+        if input.main_tab() != "Agricultural":
+            return None
+            
         stat_key = input.statistic()
         stat = SMI_STATISTICS.get(stat_key, SMI_STATISTICS["mean"])
         decade_year = input.dec().year
@@ -951,7 +1054,7 @@ def server(input, output, session) -> None:
         from plots import EU3_map
 
         # Check if we're on the Agricultural tab first
-        active_tab = input.drought_tab()
+        active_tab = input.main_tab()
         if active_tab != "Agricultural":
             # Don't render if not on the correct tab
             return _message_fig("Select the Agricultural tab to view SMI data.")
@@ -1191,26 +1294,26 @@ def server(input, output, session) -> None:
             )
 
         ax.set_title(
-            title, 
-            color=c["text"], 
-            fontsize=12, 
+            title,
+            color=c["text"],
+            fontsize=12,
             pad=8,
             family=tc.get_font_family('heading')
         )
         ax.set_ylabel(
-            "Discharge (m³ s⁻¹)", 
+            "Discharge (m³ s⁻¹)",
             color=c["text"],
             fontsize=tc.font_sizes['base'],
             family=tc.get_font_family('body')
         )
         ax.set_xlabel(
-            "Date", 
+            "Date",
             color=c["text"],
             fontsize=tc.font_sizes['base'],
             family=tc.get_font_family('body')
         )
         ax.tick_params(colors=c["text"], labelsize=tc.font_sizes['small'])
-        
+
         # Hide spines for modern look
         for spine in ax.spines.values():
             spine.set_visible(False)
@@ -1230,7 +1333,7 @@ def server(input, output, session) -> None:
     @render.plot
     def drought_hydrograph():
         """Render drought hydrograph for the clicked gauge.
-        
+
         Creates a matplotlib figure showing observed discharge with drought
         thresholds and inset plots.
         """
@@ -1242,7 +1345,7 @@ def server(input, output, session) -> None:
             return None
         if not gauge_id:
             return None
-        
+
         # Get decade year from the slider, default to first available decade
         try:
             dec_date = input.dec()
@@ -1250,11 +1353,17 @@ def server(input, output, session) -> None:
         except Exception:
             # Default to None to let the function determine the first available decade
             decade_year = None
-        
+
+        # Get persistence value
+        try:
+            persistence = input.persistence()
+        except Exception:
+            persistence = 1  # default
+
         # Generate drought hydrograph using Python implementation
         try:
             from drought_hydrograph import create_drought_hydrograph
-            fig = create_drought_hydrograph(gauge_id, decade_year)
+            fig = create_drought_hydrograph(gauge_id, decade_year, persistence)
             return fig
         except Exception as e:
             print(f"Error creating drought hydrograph: {e}")
@@ -1268,7 +1377,7 @@ def server(input, output, session) -> None:
         # Get theme colors
         tc = get_theme_config("dark")
         c = tc.colors
-        
+
         # selected_gauge is injected by the Leaflet JS via Shiny.setInputValue
         try:
             gauge_id = input.selected_gauge()
@@ -1276,14 +1385,20 @@ def server(input, output, session) -> None:
             return None
         if not gauge_id:
             return None
-        
+
         # Get decade year from the slider
         try:
             dec_date = input.dec()
             decade_year = dec_date.year
         except Exception:
             decade_year = 1960  # default
-        
+
+        # Get persistence value
+        try:
+            persistence = input.persistence()
+        except Exception:
+            persistence = 1  # default
+
         # Get gauge metadata for station name
         row = gauge_meta.loc[gauge_meta["gauge_id"] == gauge_id]
         if not row.empty:
@@ -1295,7 +1410,7 @@ def server(input, output, session) -> None:
             station_name = gauge_id
             river_name = "Unknown River"
             country = "Unknown Country"
-        
+
         # Build the descriptive text
         text = (
             f"<strong>MONTHLY HYDROLOGICAL DROUGHT ANALYSIS</strong><br><br>"
@@ -1314,13 +1429,14 @@ def server(input, output, session) -> None:
             f"The inset plots provide additional insights:<br>"
             f"• <strong>Total drought events:</strong> Number of months below each threshold over the full decade<br>"
             f"• <strong>Monthly distribution:</strong> When during the year drought events occurred<br><br>"
+            f"<strong>Persistence parameter:</strong> {persistence}+ consecutive months (minimum duration for drought event)<br><br>"
             f"<strong>Reference period:</strong> 1960–1999 (thresholds calculated relative to this baseline)"
         )
-        
+
         return ui.HTML(
             f"<div style='text-align: left; color: #bbb; font-size: 14px; line-height: 1.6; "
-            f"padding: 10px 15px 15px 15px; background-color: rgba(255,255,255,0.05); "
-            f"border-radius: 6px; border-left: 3px solid {c['primary']};'>{text}</div>"
+            f"padding: 5px 10px 10px 10px; background-color: rgba(255,255,255,0.05); "
+            f"border-radius: 5px;'>{text}</div>"
         )
 
     @render.ui
@@ -1334,7 +1450,7 @@ def server(input, output, session) -> None:
             return ui.markdown("*Click a gauge marker to view its hydrograph.*")
         if not gauge_id:
             return ui.markdown("*Click a gauge marker to view its hydrograph.*")
-        
+
         return ui.output_plot("drought_hydrograph", height="750px")
 
     @render.image

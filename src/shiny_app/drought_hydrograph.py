@@ -29,16 +29,32 @@ LWD_MAIN = 0.8
 def _apply_persistence(below, k):
     if k <= 1 or len(below) == 0:
         return below
-    values = below[:-1] != below[1:]
-    run_lengths = np.diff(np.concatenate(([0], np.where(values)[0], [len(below)])))
-    run_values = below[np.concatenate(([0], np.where(values)[0]))]
-    keep = run_values & (run_lengths >= k)
-    result = np.zeros(len(below), dtype=bool)
-    idx = 0
-    for length, value in zip(run_lengths, keep):
-        if value:
-            result[idx:idx + length] = True
-        idx += length
+    # Reset index to avoid comparison issues with pandas Series
+    below_values = below.values if hasattr(below, 'values') else below
+    # Use run-length encoding (similar to R's rle())
+    n = len(below_values)
+    if n == 0:
+        return below
+    
+    # Find where values change
+    changes = np.concatenate(([True], below_values[1:] != below_values[:-1], [True]))
+    indices = np.where(changes)[0]
+    
+    # Calculate run lengths
+    run_lengths = np.diff(indices)
+    run_values = below_values[indices[:-1]]
+    
+    # Keep only runs where value is True AND length >= k
+    keep_runs = run_values & (run_lengths >= k)
+    
+    # Build result array
+    result = np.zeros(n, dtype=bool)
+    start_idx = 0
+    for length, keep in zip(run_lengths, keep_runs):
+        if keep:
+            result[start_idx:start_idx + length] = True
+        start_idx += length
+    
     return result
 
 def _compute_monthly_thresholds(qobs, dates):
@@ -125,6 +141,7 @@ def _create_main_plot(ax, dec_df, s10_x, s10_y, s50_x, s50_y, hydro_x, hydro_y, 
     FS_LARGE = theme_config.font_sizes['large']
     FS_TITLE = theme_config.font_sizes['title']
     FS_HEADING = theme_config.font_sizes['heading']
+    FS_LEGEND = theme_config.font_sizes['small']
 
     # Fill areas first (so they're behind the line)
     ax.fill_between(s10_x, s10_y, color=COL_10YR, alpha=FILL_ALPHA, label='10-yr', zorder=1)
@@ -160,26 +177,33 @@ def _create_main_plot(ax, dec_df, s10_x, s10_y, s50_x, s50_y, hydro_x, hydro_y, 
     year_breaks = np.array(decade) - min(decade)
     ax.set_xticks(year_breaks)
     ax.set_xticklabels(
-        [str(y) for y in decade], 
+        [str(y) for y in decade],
         fontsize=FS_SMALL, family=FONT_MONO, color=COL_TEXT
     )
-    
+
+    # X-axis label for Year
+    ax.set_xlabel(
+        'Year',
+        fontsize=FS_BASE, fontfamily=FONT_MONO, color=COL_TEXT,
+        labelpad=10
+    )
+
     # Tick params - smaller size for tick labels
     ax.tick_params(
-        axis='both', direction='in', length=5, 
+        axis='both', direction='in', length=5,
         color=COL_TEXT, labelsize=FS_SMALL
     )
-    
+
     # Set font family for tick labels (tick_params doesn't support family directly)
     for label in ax.get_xticklabels() + ax.get_yticklabels():
         label.set_fontfamily(FONT_MONO)
-    
-    # Y-axis label - use body font, smaller size
+
+    # Y-axis label - use mono font
     ax.set_ylabel(
-        'streamflow (m³/s)', 
-        fontsize=FS_BASE, family=FONT_BODY, color=COL_TEXT
+        'Streamflow (m³/s)',
+        fontsize=FS_BASE, fontfamily=FONT_MONO, color=COL_TEXT,
+        labelpad=10
     )
-    ax.yaxis.set_label_coords(-0.12, 0.5)
 
     # Hide all spines for modern look
     for spine in ax.spines.values():
@@ -189,18 +213,18 @@ def _create_main_plot(ax, dec_df, s10_x, s10_y, s50_x, s50_y, hydro_x, hydro_y, 
     ax.set_facecolor('none')
 
     # Legend with theme colors - smaller, mono font
-    ax.legend(
-        loc='upper right', 
-        frameon=True, 
-        facecolor=COL_BG,
-        edgecolor=COL_GRID, 
-        fontsize=FS_LEGEND,
-        family=FONT_MONO,
-        labelcolor=COL_TEXT,
-        borderpad=0.6,
-        labelspacing=0.4,
-        framealpha=0.95
-    )
+    with plt.rc_context({'font.family': FONT_MONO}):
+        ax.legend(
+            loc='upper right',
+            frameon=True,
+            facecolor=COL_BG,
+            edgecolor=COL_GRID,
+            fontsize=FS_LEGEND,
+            labelcolor=COL_TEXT,
+            borderpad=0.6,
+            labelspacing=0.4,
+            framealpha=0.95
+        )
 
     return ax
 
@@ -232,11 +256,11 @@ def _create_total_inset(ax, dec_df, decade, palette, theme_config):
         edgecolor=[COL_10YR, COL_50YR],
         linewidth=0.8
     )
-    
+
     # Hide all spines for modern look
     for spine in ax.spines.values():
         spine.set_visible(False)
-    
+
     ax.set_yticks(y_pos)
     ax.set_yticklabels(
         ['Q10', 'Q50'],
@@ -244,13 +268,14 @@ def _create_total_inset(ax, dec_df, decade, palette, theme_config):
     )
 
     ax.set_xlabel(
-        'event count', fontsize=FS_BASE, family=FONT_BODY, color=COL_TEXT
+        'event count', fontsize=FS_BASE, fontfamily=FONT_MONO, color=COL_TEXT,
+        labelpad=10
     )
     ax.set_title(
         f'Total drought events',
-        fontsize=FS_TITLE, family=FONT_HEADING, color=COL_TEXT, pad=10
+        fontsize=FS_TITLE, fontfamily=FONT_HEADING, color=COL_TEXT, pad=10
     )
-    
+
     # Set font family for tick labels
     for label in ax.get_xticklabels() + ax.get_yticklabels():
         label.set_fontfamily(FONT_MONO)
@@ -299,19 +324,24 @@ def _create_monthly_inset(ax, dec_df, decade, palette, theme_config):
     # Hide all spines for modern look
     for spine in ax.spines.values():
         spine.set_visible(False)
-    
+
     ax.set_xticks(x)
     ax.set_xticklabels(
         months_initial, fontsize=FS_SMALL, family=FONT_MONO, color=COL_TEXT
     )
+    ax.set_xlabel(
+        'Month', fontsize=FS_BASE, fontfamily=FONT_MONO, color=COL_TEXT,
+        labelpad=10
+    )
     ax.set_ylabel(
-        'event count', fontsize=FS_BASE, family=FONT_BODY, color=COL_TEXT
+        'event count', fontsize=FS_BASE, fontfamily=FONT_MONO, color=COL_TEXT,
+        labelpad=25
     )
     ax.set_title(
         f'Drought events by month',
-        fontsize=FS_TITLE, family=FONT_HEADING, color=COL_TEXT, pad=10
+        fontsize=FS_TITLE, fontfamily=FONT_HEADING, color=COL_TEXT, pad=10
     )
-    
+
     # Set font family for tick labels
     for label in ax.get_xticklabels() + ax.get_yticklabels():
         label.set_fontfamily(FONT_MONO)
@@ -424,8 +454,8 @@ def create_drought_hydrograph(gauge_id, decade_year=None, persistence=1):
     FS_LEGEND = theme_config.font_sizes['small']  # 12px - for legend
     FS_LEGEND = theme_config.font_sizes['small']  # 12px - for legend
 
-    # Create figure with more spacious layout
-    fig = plt.figure(figsize=(14, 14), facecolor=COL_BG)
+    # Create figure with transparent background
+    fig = plt.figure(figsize=(14, 14), facecolor=(0, 0, 0, 0))
 
     # Install no-op layout engine to prevent Shiny from applying tight_layout
     fig.set_layout_engine(_NoOpLayoutEngine())
@@ -439,22 +469,22 @@ def create_drought_hydrograph(gauge_id, decade_year=None, persistence=1):
         ncols=2,
         height_ratios=[0.6, 1.2],  # Main plot larger than insets
         width_ratios=[1.0, 1.0],   # Equal width for both inset columns
-        hspace=0.30,
+        hspace=0.40,               # Increased spacing between map and hydrograph
         wspace=0.20,
         left=0.08,
         right=0.96,
-        top=0.95,
-        bottom=0.06
+        top=0.93,                  # Adjusted top margin for title space
+        bottom=0.10
     )
-    
+
     # Insets in row 0 (side by side)
     # Insets in row 0 (side by side)
     ax_total = fig.add_subplot(gs[0, 0])
     ax_month = fig.add_subplot(gs[0, 1])
-    
+
     _create_total_inset(ax_total, dec_df, decade, palette, theme_config)
     _create_monthly_inset(ax_month, dec_df, decade, palette, theme_config)
-    
+
     # Main plot in row 1 (spans both columns)
     ax_main = fig.add_subplot(gs[1, :])
     _create_main_plot(
