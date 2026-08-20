@@ -982,7 +982,7 @@ def server(input, output, session) -> None:
             )
 
         return ui.HTML(
-            f"<div style='text-align: left; color: #bbb; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}</div>"
+            f"<div style='text-align: left; color: #fff; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}</div>"
         )
 
     @render.ui
@@ -1051,7 +1051,7 @@ def server(input, output, session) -> None:
             )
 
         return ui.HTML(
-            f"<div style='text-align: left; color: #bbb; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}</div>"
+            f"<div style='text-align: left; color: #fff; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}</div>"
         )
 
     @render.plot
@@ -1439,7 +1439,7 @@ def server(input, output, session) -> None:
         )
 
         return ui.HTML(
-            f"<div style='text-align: left; color: #bbb; font-size: 14px; line-height: 1.6; "
+            f"<div style='text-align: left; color: #fff; font-size: 14px; line-height: 1.6; "
             f"padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); "
             f"border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}</div>"
         )
