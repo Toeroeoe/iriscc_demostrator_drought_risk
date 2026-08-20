@@ -249,9 +249,9 @@ class EU1_map(demo_fig):
             nrows=1,
             ncols=2,
             width_ratios=[1, self.cbar_width_ratio],
-            wspace=0.2,  # increased gap between map and colorbar
+            wspace=0.05,  # increased gap between map and colorbar
             left=0.02,
-            right=0.90,
+            right=0.8,
             top=0.98,  # Removed title, minimal top space
             bottom=0.10,  # room below axes for latitude tick labels
         )
