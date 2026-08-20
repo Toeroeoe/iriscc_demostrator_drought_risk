@@ -272,27 +272,7 @@ page_droughts = ui.page_fluid(
     ui.page_sidebar(
         ui.sidebar(
             "View settings",
-            ui.div(
-                ui.tags.strong(
-                    "Reference period: 1960–1999",
-                    style="font-size: 0.85em;",
-                ),
-                ui.tags.br(),
-                ui.tags.span(
-                    "All drought indices are calculated relative to this "
-                    "baseline period.",
-                    style="font-size: 0.75em;",
-                ),
-                style=(
-                    "border: 1px solid #f0ad4e; "
-                    "border-left: 4px solid #f0ad4e; "
-                    "background-color: rgba(240, 173, 78, 0.12); "
-                    "border-radius: 6px; "
-                    "padding: 10px 12px; "
-                    "margin-bottom: 14px; "
-                    "text-align: left;"
-                ),
-            ),
+            ui.output_ui("reference_period_display"),
             ui.output_ui("conditional_sidebar_controls"),
             ui.input_slider(
                 "dec",
@@ -675,6 +655,38 @@ def server(input, output, session) -> None:
         return fig
 
     @render.ui
+    def reference_period_display():
+        """Dynamically show the reference period based on the active tab."""
+        active_tab = input.main_tab()
+        
+        if active_tab == "Meteorological":
+            ref_period = "1961–1990"
+        else:  # Agricultural or Hydrological
+            ref_period = "1960–1999"
+        
+        return ui.div(
+            ui.tags.strong(
+                f"Reference period: {ref_period}",
+                style="font-size: 0.85em;",
+            ),
+            ui.tags.br(),
+            ui.tags.span(
+                "All drought indices are calculated relative to this "
+                "baseline period.",
+                style="font-size: 0.75em;",
+            ),
+            style=(
+                "border: 1px solid #f0ad4e; "
+                "border-left: 4px solid #f0ad4e; "
+                "background-color: rgba(240, 173, 78, 0.12); "
+                "border-radius: 6px; "
+                "padding: 10px 12px; "
+                "margin-bottom: 14px; "
+                "text-align: left;"
+            ),
+        )
+
+    @render.ui
     def dynamic_threshold_slider():
         """Dynamically show threshold slider based on active tab and statistic.
 
@@ -965,12 +977,12 @@ def server(input, output, session) -> None:
                 f"({decade_year}–{decade_year + 9}).<br><br>"
                 f"<strong>Statistic:</strong> {stat['label']}<br>"
                 f"<strong>Threshold:</strong> SPI ≤ {spi_thresh:.1f}<br>"
-                f"<strong>Reference period:</strong> 1960–1999<br><br>"
+                f"<strong>Reference period:</strong> 1961–1990<br><br>"
                 f"{base_meaning}."
             )
 
         return ui.HTML(
-            f"<div style='text-align: left; color: #bbb; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(255,255,255,0.05); border-radius: 5px;'>{text}</div>"
+            f"<div style='text-align: left; color: #bbb; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}</div>"
         )
 
     @render.ui
@@ -1039,7 +1051,7 @@ def server(input, output, session) -> None:
             )
 
         return ui.HTML(
-            f"<div style='text-align: left; color: #bbb; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(255,255,255,0.05); border-radius: 5px;'>{text}</div>"
+            f"<div style='text-align: left; color: #bbb; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}</div>"
         )
 
     @render.plot
@@ -1428,8 +1440,8 @@ def server(input, output, session) -> None:
 
         return ui.HTML(
             f"<div style='text-align: left; color: #bbb; font-size: 14px; line-height: 1.6; "
-            f"padding: 5px 10px 10px 10px; background-color: rgba(255,255,255,0.05); "
-            f"border-radius: 5px;'>{text}</div>"
+            f"padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); "
+            f"border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}</div>"
         )
 
     @render.ui
