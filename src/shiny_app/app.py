@@ -244,13 +244,15 @@ def _blank_ocean(data, mean_map, decade_year):
 
 
 # The contents of the first 'page' is a navset with two 'panels'.
-page_droughts = ui.page_fluid(
+# Intro card first (full width), then sidebar + content
+page_droughts = ui.div(
+    # Intro card (full width at top)
     ui.card(
         ui.markdown(
             """
 
             Droughts are among the most far-reaching climate-related hazards.
-            They develop slowly, but their effects can be severe and widespread. A drought is defined as precipitation persistently below normal levels (a *meteorological drought*). If the deficit continues and is potentially accompanied by an increased water demand from a dry atmosphere, it depletes soil moisture and reduces water available to plants (an *agricultural drought*). Eventually, it can lower river discharge (a *hydrological drought*).
+            They develop slowly, but their effects can be severe and widespread. A drought is defined as precipitation persistantly below normal levels (a *meteorological drought*). If the deficit continues and is potentially accompanied by an increased water demand from a dry atmosphere, it depletes soil moisture and reduces water available to plants (an *agricultural drought*). Eventually, it can lower river discharge (a *hydrological drought*).
 
             These interlinked forms of drought place terrestrial ecosystems and
             the services they provide under considerable stress. They reduce
@@ -262,16 +264,16 @@ page_droughts = ui.page_fluid(
             This demonstrator lets you explore how meteorological,
             hydrological, and agricultural droughts have evolved over recent
             decades and what they mean for ecosystem functioning. Use the
-            **view settings** on the left to select a decade, atmospheric
+            **view settings** below to select a decade, atmospheric
             forcing, and emission scenario, and switch between the tabs to
             examine drought occurrence and its impacts.
             """
         ),
         style="text-align: left;",
     ),
+    # Sidebar and navsets below intro
     ui.page_sidebar(
         ui.sidebar(
-            "View settings",
             ui.output_ui("reference_period_display"),
             ui.output_ui("conditional_sidebar_controls"),
             ui.input_slider(
@@ -338,9 +340,9 @@ page_droughts = ui.page_fluid(
             ui.nav_panel("Forest carbon uptake"),
             ui.nav_panel("Mortality"),
             title="Impacts",
-        ),
+        )
     ),  # Close page_sidebar
-)
+)  # Close outer div
 
 # ── Static informational pages ──────────────────────────────────────────────
 
@@ -488,36 +490,34 @@ app_ui = ui.page_fluid(
                     /* Sidebar text */
                     .bslib-sidebar-layout .sidebar {
                         font-family: Inter, system-ui, -apple-system, sans-serif;
-                        transition: position 0.3s ease, top 0.3s ease;
                     }
-                    
-                    /* Fixed sidebar class (applied via JS when scrolling past intro) */
-                    .bslib-sidebar-layout aside.sidebar.is-fixed {
-                        position: fixed !important;
-                        top: 20px;
-                        left: 20px;
-                        width: 300px;
-                        max-height: calc(100vh - 40px);
-                        overflow-y: auto;
-                        z-index: 100;
+
+                    /* Sidebar styling - applied by default in both states */
+                    .bslib-sidebar-layout aside.sidebar {
+                        position: static;
+                        width: 310px;
                         background: #2a2a2a !important;
                         border: 1px solid #444;
                         border-radius: 6px;
                         box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                        padding: 15px;
+                        transition: position 0.3s ease, left 0.3s ease;
                     }
-                    
-                    /* Add margin only when sidebar is fixed - apply to container only */
-                    .bslib-sidebar-layout.is-scrolled main .container,
-                    .bslib-sidebar-layout.is-scrolled .page-body > .container {
-                        margin-left: 320px;
-                        padding-left: 20px;
+
+                    /* Fixed state - only changes position to fixed when scrolling past intro */
+                    .bslib-sidebar-layout aside.sidebar.is-fixed {
+                        position: fixed !important;
+                        top: 20px;
+                        /* left value set dynamically via JavaScript to match natural position */
+                        max-height: calc(100vh - 40px);
+                        overflow-y: auto;
+                        z-index: 100;
                     }
-                    
-                    /* Reset any margins on rows to prevent squeezing */
-                    .bslib-sidebar-layout.is-scrolled main .row {
-                        margin-left: auto !important;
-                        margin-right: auto !important;
-                        padding-left: 0 !important;
+
+                    /* Add left margin to main content when sidebar is fixed */
+                    .bslib-sidebar-layout.is-scrolled .container,
+                    .bslib-sidebar-layout.is-scrolled main .container {
+                        margin-left: 360px !important;
                     }
 
                     /* Card text */
@@ -530,33 +530,74 @@ app_ui = ui.page_fluid(
                 document.addEventListener('DOMContentLoaded', function() {
                     const sidebar = document.querySelector('.bslib-sidebar-layout aside.sidebar');
                     const sidebarLayout = document.querySelector('.bslib-sidebar-layout');
-                    if (!sidebar || !sidebarLayout) return;
                     
-                    const introSection = document.querySelector('.page-body') || document.querySelector('.main');
-                    if (!introSection) return;
+                    if (!sidebar || !sidebarLayout) {
+                        console.log('Sidebar elements not found');
+                        return;
+                    }
                     
-                    const triggerPoint = introSection.offsetHeight - 100;
+                    // Find the outer container (parent of page_sidebar)
+                    let container = sidebar.closest('.bslib-sidebar-layout');
+                    if (container) {
+                        container = container.parentNode;
+                    }
+                    
+                    if (!container) {
+                        console.log('Container not found');
+                        return;
+                    }
+                    
+                    // Get the intro card (first direct child .card)
+                    const introCard = Array.from(container.children).find(child => 
+                        child.classList && child.classList.contains('card')
+                    );
+                    
+                    if (!introCard) {
+                        console.log('Intro card not found');
+                        return;
+                    }
+                    
+                    // Calculate trigger point (bottom of intro card + buffer)
+                    function getTriggerPoint() {
+                        const rect = introCard.getBoundingClientRect();
+                        return window.pageYOffset + rect.top + rect.height + 30;
+                    }
+                    
+                    // Get the sidebar's position from viewport left edge (accounts for all padding/frames)
+                    function getNaturalLeft() {
+                        const rect = sidebar.getBoundingClientRect();
+                        return rect.left;
+                    }
+                    
+                    // Store the natural left position
+                    let naturalLeft = getNaturalLeft();
+                    
+                    // Recalculate on resize (layout might change)
+                    window.addEventListener('resize', () => {
+                        naturalLeft = getNaturalLeft();
+                        handleScroll();
+                    });
                     
                     function handleScroll() {
                         const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-                        if (scrollTop > triggerPoint) {
+                        const shouldBeFixed = scrollTop > getTriggerPoint();
+                        const isCurrentlyFixed = sidebar.classList.contains('is-fixed');
+                        
+                        if (shouldBeFixed && !isCurrentlyFixed) {
+                            // Capture the current left position from viewport (accounts for all padding/frames)
+                            naturalLeft = getNaturalLeft();
+                            sidebar.style.left = naturalLeft + 'px';
                             sidebar.classList.add('is-fixed');
                             sidebarLayout.classList.add('is-scrolled');
-                        } else {
+                        } else if (!shouldBeFixed && isCurrentlyFixed) {
+                            sidebar.style.left = '';
                             sidebar.classList.remove('is-fixed');
                             sidebarLayout.classList.remove('is-scrolled');
                         }
                     }
                     
-                    window.addEventListener('scroll', handleScroll);
-                    
-                    document.querySelectorAll('.nav-link').forEach(link => {
-                        link.addEventListener('click', function() {
-                            setTimeout(handleScroll, 100);
-                        });
-                    });
-                    
-                    handleScroll();
+                    window.addEventListener('scroll', handleScroll, { passive: true });
+                    handleScroll(); // Initial check
                 });
                 """),
     ),
@@ -658,12 +699,12 @@ def server(input, output, session) -> None:
     def reference_period_display():
         """Dynamically show the reference period based on the active tab."""
         active_tab = input.main_tab()
-        
+
         if active_tab == "Meteorological":
             ref_period = "1961–1990"
         else:  # Agricultural or Hydrological
             ref_period = "1960–1999"
-        
+
         return ui.div(
             ui.tags.strong(
                 f"Reference period: {ref_period}",
@@ -695,11 +736,11 @@ def server(input, output, session) -> None:
         - dfreq, maxspell: Show threshold (depends on threshold for counting)
         """
         active_tab = input.main_tab()
-        
+
         # Only show threshold slider for Meteorological and Agricultural tabs
         if active_tab not in ("Meteorological", "Agricultural"):
             return None
-            
+
         stat_key = input.statistic()
 
         # Statistics that don't use thresholds
@@ -748,7 +789,7 @@ def server(input, output, session) -> None:
     def conditional_sidebar_controls():
         """Show different sidebar controls based on the active tab."""
         active_tab = input.main_tab()
-        
+
         if active_tab == "Hydrological":
             # Show persistence slider and station selector for Hydrological tab
             return ui.div(
@@ -936,7 +977,7 @@ def server(input, output, session) -> None:
         # Only show caption on Meteorological tab
         if input.main_tab() != "Meteorological":
             return None
-            
+
         decade_year = input.dec().year
         model = input.model()
         stat_key = input.statistic()
@@ -991,7 +1032,7 @@ def server(input, output, session) -> None:
         # Only show caption on Agricultural tab
         if input.main_tab() != "Agricultural":
             return None
-            
+
         stat_key = input.statistic()
         stat = SMI_STATISTICS.get(stat_key, SMI_STATISTICS["mean"])
         decade_year = input.dec().year
