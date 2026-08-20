@@ -57,6 +57,31 @@ def _apply_persistence(below, k):
 
     return result
 
+
+def _count_events(below):
+    """Count actual drought events (transitions from non-drought to drought).
+    
+    Args:
+        below: Boolean array/Series where True = below threshold
+        
+    Returns:
+        Integer count of drought events (separate runs of consecutive months)
+    """
+    if len(below) == 0:
+        return 0
+    
+    # Convert to numpy array if it's a pandas Series
+    below_array = below.values if hasattr(below, 'values') else np.array(below)
+    
+    # Count transitions from False to True (start of new event)
+    if len(below_array) == 1:
+        return 1 if below_array[0] else 0
+    
+    # Find where events start: True preceded by False (or at index 0)
+    transitions = np.concatenate(([below_array[0]], below_array[1:] & ~below_array[:-1]))
+    return int(np.sum(transitions))
+
+
 def _compute_monthly_thresholds(qobs, dates):
     months = np.arange(1, 13)
     thresholds = []
@@ -243,8 +268,11 @@ def _create_total_inset(ax, dec_df, decade, palette, theme_config):
     FS_TITLE = theme_config.font_sizes['title']
     FS_HEADING = theme_config.font_sizes['heading']
 
-    count_q10 = sum((dec_df['drought_10yr']) & (~dec_df['drought_50yr']))
-    count_q50 = sum(dec_df['drought_50yr'])
+    # Count actual drought events (not just months)
+    # Q10-only events: below Q10 but NOT below Q50
+    q10_only = (dec_df['drought_10yr']) & (~dec_df['drought_50yr'])
+    count_q10 = _count_events(q10_only)
+    count_q50 = _count_events(dec_df['drought_50yr'])
     counts = [count_q10, count_q50]
     y_pos = np.arange(2)
     width = 0.5

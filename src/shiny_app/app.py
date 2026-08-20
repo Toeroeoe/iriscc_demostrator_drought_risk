@@ -274,6 +274,7 @@ page_droughts = ui.div(
     # Sidebar and navsets below intro
     ui.page_sidebar(
         ui.sidebar(
+            "View settings",
             ui.output_ui("reference_period_display"),
             ui.output_ui("conditional_sidebar_controls"),
             ui.input_slider(
@@ -338,7 +339,6 @@ page_droughts = ui.div(
         ui.navset_card_pill(
             ui.nav_panel("Crop yield", ""),
             ui.nav_panel("Forest carbon uptake"),
-            ui.nav_panel("Mortality"),
             title="Impacts",
         )
     ),  # Close page_sidebar
@@ -491,17 +491,47 @@ app_ui = ui.page_fluid(
                     .bslib-sidebar-layout .sidebar {
                         font-family: Inter, system-ui, -apple-system, sans-serif;
                     }
-
+                    
                     /* Sidebar styling - applied by default in both states */
                     .bslib-sidebar-layout aside.sidebar {
                         position: static;
-                        width: 310px;
+                        width: 300px;
+                        box-sizing: border-box;
                         background: #2a2a2a !important;
-                        border: 1px solid #444;
-                        border-radius: 6px;
-                        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-                        padding: 15px;
+                        border: 1px solid #3a3a3a;
+                        border-radius: 4px;
+                        box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+                        padding: 10px !important;
                         transition: position 0.3s ease, left 0.3s ease;
+                    }
+                    
+                    /* Style the sidebar header/title with grey background only */
+                    .bslib-sidebar-layout aside.sidebar .sidebar-header,
+                    .bslib-sidebar-layout aside.sidebar header {
+                        background-color: #e9ecef !important;
+                        color: #333;
+                        font-weight: 600;
+                        padding: 8px 12px;
+                        border-bottom: 1px solid #dee2e6;
+                        margin: -10px -10px 10px -10px;
+                        border-radius: 4px 4px 0 0;
+                        position: relative;
+                        top: -10px;
+                    }
+                    
+                    /* Ensure sidebar content area starts after the header */
+                    .bslib-sidebar-layout aside.sidebar > div {
+                        margin-top: 0;
+                    }
+                    
+                    /* Align sidebar and main content at the top */
+                    .bslib-sidebar-layout > .row {
+                        align-items: flex-start;
+                    }
+                    
+                    /* Ensure main content aligns vertically with sidebar */
+                    .bslib-sidebar-layout .main {
+                        padding-top: 0;
                     }
 
                     /* Fixed state - only changes position to fixed when scrolling past intro */
@@ -517,7 +547,7 @@ app_ui = ui.page_fluid(
                     /* Add left margin to main content when sidebar is fixed */
                     .bslib-sidebar-layout.is-scrolled .container,
                     .bslib-sidebar-layout.is-scrolled main .container {
-                        margin-left: 360px !important;
+                        margin-left: 355px !important;
                     }
 
                     /* Card text */
@@ -530,59 +560,59 @@ app_ui = ui.page_fluid(
                 document.addEventListener('DOMContentLoaded', function() {
                     const sidebar = document.querySelector('.bslib-sidebar-layout aside.sidebar');
                     const sidebarLayout = document.querySelector('.bslib-sidebar-layout');
-                    
+
                     if (!sidebar || !sidebarLayout) {
                         console.log('Sidebar elements not found');
                         return;
                     }
-                    
+
                     // Find the outer container (parent of page_sidebar)
                     let container = sidebar.closest('.bslib-sidebar-layout');
                     if (container) {
                         container = container.parentNode;
                     }
-                    
+
                     if (!container) {
                         console.log('Container not found');
                         return;
                     }
-                    
+
                     // Get the intro card (first direct child .card)
-                    const introCard = Array.from(container.children).find(child => 
+                    const introCard = Array.from(container.children).find(child =>
                         child.classList && child.classList.contains('card')
                     );
-                    
+
                     if (!introCard) {
                         console.log('Intro card not found');
                         return;
                     }
-                    
+
                     // Calculate trigger point (bottom of intro card + buffer)
                     function getTriggerPoint() {
                         const rect = introCard.getBoundingClientRect();
                         return window.pageYOffset + rect.top + rect.height + 30;
                     }
-                    
+
                     // Get the sidebar's position from viewport left edge (accounts for all padding/frames)
                     function getNaturalLeft() {
                         const rect = sidebar.getBoundingClientRect();
                         return rect.left;
                     }
-                    
+
                     // Store the natural left position
                     let naturalLeft = getNaturalLeft();
-                    
+
                     // Recalculate on resize (layout might change)
                     window.addEventListener('resize', () => {
                         naturalLeft = getNaturalLeft();
                         handleScroll();
                     });
-                    
+
                     function handleScroll() {
                         const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
                         const shouldBeFixed = scrollTop > getTriggerPoint();
                         const isCurrentlyFixed = sidebar.classList.contains('is-fixed');
-                        
+
                         if (shouldBeFixed && !isCurrentlyFixed) {
                             // Capture the current left position from viewport (accounts for all padding/frames)
                             naturalLeft = getNaturalLeft();
@@ -595,7 +625,7 @@ app_ui = ui.page_fluid(
                             sidebarLayout.classList.remove('is-scrolled');
                         }
                     }
-                    
+
                     window.addEventListener('scroll', handleScroll, { passive: true });
                     handleScroll(); // Initial check
                 });
@@ -613,7 +643,6 @@ app_ui = ui.page_fluid(
     ui.navset_card_pill(
         ui.nav_spacer(),
         ui.nav_panel("Droughts and their impacts", page_droughts),
-        ui.nav_panel("Uncertainty", "a"),
         ui.nav_panel("Model evaluation", page_model_evaluation),
         ui.nav_menu(
             "Further Information",
