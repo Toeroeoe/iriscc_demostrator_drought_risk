@@ -332,25 +332,12 @@ page_droughts = ui.page_fluid(
         ui.navset_card_pill(
             ui.nav_panel(
                 "Meteorological",
-                ui.row(
-                    ui.column(
-                        9,  # 7/12 ≈ 58% width
-                        ui.output_plot("render_spi_map", height="600px"),
-                        style="margin: 0 auto;",  # Center the column
-                    ),
-                ),
-            ui.output_ui("spi_caption"),
+                ui.output_plot("render_spi_map", height="600px"),
+                ui.output_ui("spi_caption"),
             ),
             ui.nav_panel(
                 "Agricultural",
-                ui.row(
-                    ui.column(
-                        11,
-                        ui.output_plot("render_eu3_map", height="650px"),
-
-                        style="margin: 0 auto;"
-                    ),
-                ),
+                ui.output_plot("render_eu3_map", height="650px"),
                 ui.output_ui("smi_caption"),
             ),
             ui.nav_panel(
@@ -539,12 +526,18 @@ app_ui = ui.page_fluid(
                         box-shadow: 0 2px 8px rgba(0,0,0,0.3);
                     }
                     
-                    /* Add margin only when sidebar is fixed */
+                    /* Add margin only when sidebar is fixed - apply to container only */
                     .bslib-sidebar-layout.is-scrolled main .container,
-                    .bslib-sidebar-layout.is-scrolled main .row,
                     .bslib-sidebar-layout.is-scrolled .page-body > .container {
-                        margin-left: 340px;
+                        margin-left: 320px;
                         padding-left: 20px;
+                    }
+                    
+                    /* Reset any margins on rows to prevent squeezing */
+                    .bslib-sidebar-layout.is-scrolled main .row {
+                        margin-left: auto !important;
+                        margin-right: auto !important;
+                        padding-left: 0 !important;
                     }
 
                     /* Card text */

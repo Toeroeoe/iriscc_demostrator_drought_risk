@@ -249,9 +249,9 @@ class EU1_map(demo_fig):
             nrows=1,
             ncols=2,
             width_ratios=[1, self.cbar_width_ratio],
-            wspace=0.03,  # tighter gap between map and colorbar
+            wspace=0.2,  # increased gap between map and colorbar
             left=0.02,
-            right=0.88,
+            right=0.90,
             top=0.98,  # Removed title, minimal top space
             bottom=0.10,  # room below axes for latitude tick labels
         )
@@ -381,7 +381,7 @@ class EU1_map(demo_fig):
             fontsize=self.fs_map_label,
             color=self.theme_config.colors["text"],
             rotation=270,  # Vertical label (top to bottom)
-            labelpad=20,  # Increased padding
+            labelpad=20,  # Original padding
         )
         self.cbar.ax.tick_params(
             labelsize=self.fs_map_label, colors=self.theme_config.colors["text"]
