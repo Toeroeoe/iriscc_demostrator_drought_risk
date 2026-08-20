@@ -35,18 +35,18 @@ def _apply_persistence(below, k):
     n = len(below_values)
     if n == 0:
         return below
-    
+
     # Find where values change
     changes = np.concatenate(([True], below_values[1:] != below_values[:-1], [True]))
     indices = np.where(changes)[0]
-    
+
     # Calculate run lengths
     run_lengths = np.diff(indices)
     run_values = below_values[indices[:-1]]
-    
+
     # Keep only runs where value is True AND length >= k
     keep_runs = run_values & (run_lengths >= k)
-    
+
     # Build result array
     result = np.zeros(n, dtype=bool)
     start_idx = 0
@@ -54,7 +54,7 @@ def _apply_persistence(below, k):
         if keep:
             result[start_idx:start_idx + length] = True
         start_idx += length
-    
+
     return result
 
 def _compute_monthly_thresholds(qobs, dates):
@@ -335,7 +335,7 @@ def _create_monthly_inset(ax, dec_df, decade, palette, theme_config):
     )
     ax.set_ylabel(
         'event count', fontsize=FS_BASE, fontfamily=FONT_MONO, color=COL_TEXT,
-        labelpad=25
+        labelpad=10
     )
     ax.set_title(
         f'Drought events by month',
