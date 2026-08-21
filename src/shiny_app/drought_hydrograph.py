@@ -20,11 +20,12 @@ class _NoOpLayoutEngine(LayoutEngine):
         pass  # deliberately do nothing
 
 
-# Styling constants - colors will be fetched from theme at runtime
-COL_10YR = '#f08c00'   # orange - 10-yr return period
-COL_50YR = '#b23a00'   # dark orange - 50-yr return period
-FILL_ALPHA = 0.4
-LWD_MAIN = 0.8
+# Styling constants - tuned for visibility on dark backgrounds
+COL_10YR = '#ffb020'   # bright amber - 10-yr return period
+COL_50YR = '#ff6b35'   # vivid orange-red - 50-yr return period
+COL_HYDRO = '#4dabf7'  # bright sky blue - monthly hydrograph line
+FILL_ALPHA = 0.5
+LWD_MAIN = 2.5
 
 def _apply_persistence(below, k):
     if k <= 1 or len(below) == 0:
@@ -174,7 +175,7 @@ def _create_main_plot(ax, dec_df, s10_x, s10_y, s50_x, s50_y, hydro_x, hydro_y, 
 
     # Plot hydrograph line - use smoothed data (no gaps)
     line = ax.plot(
-        hydro_x, hydro_y, color=COL_PRIMARY, linewidth=LWD_MAIN,
+        hydro_x, hydro_y, color=COL_HYDRO, linewidth=LWD_MAIN,
         label='Monthly hydrograph', zorder=10, solid_capstyle='round',
         solid_joinstyle='round'
     )[0]
@@ -465,8 +466,6 @@ def create_drought_hydrograph(gauge_id, decade_year=None, persistence=1):
     COL_BG = palette['background']
     COL_GRID = palette['grid']
     COL_PRIMARY = palette['primary']
-    COL_10YR = '#f08c00'   # orange - 10-yr return period
-    COL_50YR = '#b23a00'   # dark orange - 50-yr return period
 
     # Define font families
     FONT_BODY = theme_config.get_font_family('body')
