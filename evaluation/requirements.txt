@@ -1,0 +1,4 @@
+icoscp==0.2.3
+icoscp-core==0.3.13
+pandas==3.0.5
+pytest==9.1.1
