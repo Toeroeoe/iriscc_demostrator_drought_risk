@@ -292,7 +292,7 @@ def _create_total_inset(ax, dec_df, decade, palette, theme_config):
 
     ax.set_yticks(y_pos)
     ax.set_yticklabels(
-        ['Q10', 'Q50'],
+        ['10-yr', '50-yr'],
         fontsize=FS_SMALL, family=FONT_MONO, color=COL_TEXT
     )
 
