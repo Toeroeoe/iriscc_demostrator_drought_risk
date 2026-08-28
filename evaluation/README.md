@@ -1,13 +1,14 @@
-# ICOS Soil Moisture Data Download Scripts
+# ICOS Data Download Scripts (Soil Moisture & Fluxes)
 
-This directory contains scripts to discover and download ICOS surface soil moisture data from ecosystem (ES) stations with Level 2 data.
+This directory contains scripts to discover and download ICOS Level 2 time series data from ecosystem (ES) stations. It covers two data products:
 
-## Overview
+- **ETC L2 Meteo** — meteorological variables, including soil water content (SWC - Soil Water Content) at various depths
+- **ETC L2 Flux** — ecosystem fluxes (GPP, NEE, RE, ...)
 
-ICOS (Integrated Carbon Observation System) provides soil moisture measurements (SWC - Soil Water Content) at various depths as part of their ETC L2 Meteo data products. These scripts help you:
+The scripts help you:
 
-1. **Discover** which stations have soil moisture data and their metadata
-2. **Download** the actual soil moisture time series data
+1. **Discover** which stations have which variables (no authentication required)
+2. **Download** the time series data you need, including soil moisture (SWC) and GPP **combined in a single output file** (authentication required)
 
 ## Prerequisites
 
@@ -54,10 +55,10 @@ Get a token from your "My Account" page at https://meta.icos-cp.eu/ and use it d
 3. Copy the full token value (it starts with `cpauthToken=`)
 4. Use it in the command:
 ```bash
-python download_soil_moisture.py --cpauthtoken cpauthToken=[the-actual-token-value]
+python download.py --cpauthtoken cpauthToken=[the-actual-token-value]
 ```
 
-**Important**: Make sure to include the `cpauthToken=` prefix. The token looks like a long encoded string (e.g., `cpauthToken=WzE2OTY2NzQ5OD...]`).
+**Important**: Make sure to include the `cpauthToken=` prefix. The token looks like a long encoded string (e.g. `cpauthToken=WzE2OTY2NzQ5OD...]`).
 
 **Note**: Tokens expire after approximately 27 hours.
 
@@ -72,69 +73,103 @@ Full authentication documentation: https://icos-carbon-portal.github.io/pylib/ic
 
 ## Scripts
 
-### 1. evaluation_icos.py - Discover Stations with Soil Moisture Data
+### 1. metadata.py - Discover Stations and Variables
 
-This script queries the ICOS Carbon Portal metadata service to find all ecosystem stations that have Level 2 soil moisture data.
+This script queries the ICOS Carbon Portal metadata service to find all ecosystem stations that have Level 2 data for the requested data types.
+
+**Data types** (`--datatype`, comma-separated):
+- `etcL2Meteo` — meteorology, includes soil moisture (SWC_1, SWC_2, ...)
+- `etcL2Flux` — ecosystem fluxes (GPP, NEE, RE, ...)
+- `rts_gpp`, `rts_nee` — RTS products
+
+Default: `etcL2Meteo,etcL2Flux` (soil moisture AND fluxes).
 
 **Usage:**
 ```bash
-python evaluation_icos.py
+# Default: discover stations with ETC L2 Meteo (soil moisture) AND ETC L2 Flux (GPP/NEE):
+python metadata.py
+
+# Only ETC L2 Meteo (soil moisture):
+python metadata.py --datatype etcL2Meteo
+
+# Only ETC L2 Flux (fluxes):
+python metadata.py --datatype etcL2Flux
+
+# Filter variables by pattern (e.g., only SWC variables):
+python metadata.py --variable-pattern SWC
+
+# Filter for GPP and NEE:
+python metadata.py --variable-pattern GPP,NEE
+
+# Write the CSVs to a different directory (default: this directory):
+python metadata.py --output-dir /path/to/output
 ```
 
-**Output:**
-- `station_metadata.csv` - Metadata for all stations with soil moisture data
-- `stations_soil_moisture.csv` - List of stations with data object URIs for downloading
+**Output** (one CSV per queried data type):
+- `stations_sm.csv` - stations with ETC L2 Meteo data (soil moisture)
+- `stations_flux.csv` - stations with ETC L2 Flux data (GPP/NEE)
+- `stations_combined.csv` - **written when multiple data types are queried**: one row per station with the **union of all data object URIs** across data types, plus the union of variables. This is the input to use for downloading e.g. SWC and GPP in a single run.
+
+Each CSV contains the station metadata (name, coordinates, elevation, country) alongside the data object URIs:
+
+```
+station_uri,station_id,station_name,latitude,longitude,<variables>,num_data_objects,data_object_uris
+```
+
+where `<variables>` is `soil_moisture_variables` in `stations_sm.csv`, `flux_variables` in `stations_flux.csv`, and `variables` in `stations_combined.csv`.
+
+**Sample output (stations_sm.csv):**
+```csv
+station_uri,station_id,station_name,latitude,longitude,soil_moisture_variables,num_data_objects,data_object_uris
+http://meta.icos-cp.eu/resources/stations/ES_FI-Lom,FI-Lom,Lompolojankka (FI-Lom),67.99724,24.209179,SWC_1,2,https://meta.icos-cp.eu/objects/abc...; https://meta.icos-cp.eu/objects/def...
+```
 
 **What it does:**
-- Finds ecosystem (ES) stations with ETC L2 Meteo data
-- Identifies which stations have soil moisture (SWC) variables
+- Finds ecosystem (ES) stations with data for the requested data types
+- Identifies which variables each station has (SWC_1, SWC_2, GPP, NEE, ...)
 - Extracts station metadata: name, coordinates, elevation, country
-- Lists available SWC levels per station (SWC_1, SWC_2, etc.)
+- Lists the available data object URIs per station (one row per station, `data_object_uris` semicolon-separated)
 
-**Sample output (station_metadata.csv):**
-```csv
-station_uri,station_id,station_name,latitude,longitude,elevation,country_code,ecosystem_type,soil_moisture_variables
-http://meta.icos-cp.eu/resources/stations/ES_FI-Lom,FI-Lom,Lompolojankka (FI-Lom),67.99724,24.209179,247.0,FI,Ecosystem (ES),SWC_1
-http://meta.icos-cp.eu/resources/stations/ES_FR-Hes,FR-Hes,Hesse (FR-Hes),48.6741,7.06465,310.0,FR,Ecosystem (ES),SWC_1; SWC_2; SWC_3; SWC_4; SWC_5
-...
-```
+### 2. download.py - Download ICOS Time Series Data
 
-### 2. download_soil_moisture.py - Download ICOS Time Series Data
-
-This script downloads time series data (soil moisture, GPP, NEE, etc.) from the stations discovered by `evaluation_icos.py`.
+This script downloads time series data (soil moisture, GPP, NEE, etc.) from the stations listed in an input CSV file (created by `metadata.py`), and combines everything into a single output CSV.
 
 **Usage**:
 ```bash
-# Download only SWC_1 (default):
-python download_soil_moisture.py
+# Download SWC_1 (default) for all stations in stations_sm.csv:
+python download.py
 
 # Download multiple variables (soil layers and/or fluxes such as GPP):
-python download_soil_moisture.py --variables SWC_1,SWC_2,GPP
+python download.py --variables SWC_1,SWC_2,GPP
 
 # Download all soil layers ('SWC' matches SWC_1, SWC_2, ...):
-python download_soil_moisture.py --variables SWC
+python download.py --variables SWC
+
+# Soil moisture AND GPP in one output file
+# (stations_combined.csv is written by metadata.py when multiple data types are queried):
+python download.py --input-csv stations_combined.csv --variables SWC_1,GPP --output gpp_sm_timeseries.csv
 
 # Resample to daily means:
-python download_soil_moisture.py --variables SWC_1 --resample 1D
+python download.py --variables SWC_1 --resample 1D
 
 # Daily mean and standard deviation:
-python download_soil_moisture.py --variables SWC_1 --resample 1D --agg mean,std
+python download.py --variables SWC_1 --resample 1D --agg mean,std
 
 # With authentication token:
-python download_soil_moisture.py --cpauthtoken cpauthToken=YOUR_TOKEN_HERE --variables SWC_1
+python download.py --cpauthtoken cpauthToken=YOUR_TOKEN_HERE --variables SWC_1
 
 # Limit the number of data objects processed (useful for testing):
-python download_soil_moisture.py --limit 5
+python download.py --limit 5
 
 # Specify input/output files:
-python download_soil_moisture.py --input-csv stations_soil_moisture.csv --output soil_data.csv
+python download.py --input-csv stations_sm.csv --output soil_data.csv
 
 # Show help:
-python download_soil_moisture.py --help
+python download.py --help
 ```
 
 **Options**:
-- `--input-csv`: Input CSV file with station information (default: `stations_soil_moisture.csv`)
+- `--input-csv`: Input CSV file with station information (default: `stations_sm.csv`). Use `stations_combined.csv` to fetch variables from multiple data types (e.g. SWC and GPP) in one run
 - `--output`: Output CSV file for time series data (default: `icos_timeseries.csv`)
 - `--variables`: Comma-separated variable names to download (default: `SWC_1`). A bare family prefix matches all numbered variants (e.g., `SWC` matches `SWC_1`, `SWC_2`, ...)
 - `--resample`: Pandas resample rule applied after downloading (e.g., `1D` for daily). No resampling by default.
@@ -142,59 +177,61 @@ python download_soil_moisture.py --help
 - `--limit`: Maximum number of data objects to process (default: all)
 - `--cpauthtoken`: ICOS Carbon Portal authentication token (use for temporary access without credentials file)
 
-**Output**:
-- `icos_timeseries.csv` - Time series data with TIMESTAMP as the index and one column per station-variable time series
+**How mixed variables work**: `download.py` matches each requested variable against the columns of each data object individually — a variable that a data object does not contain is simply skipped. So with `stations_combined.csv` and `--variables SWC_1,GPP`, the SWC values come from the ETC L2 Meteo data objects and the GPP values from the ETC L2 Flux data objects, all written into the **same output file**.
 
-**Sample output**:
-```
-TIMESTAMP,FI-Lom (m3/m3),FR-Hes (m3/m3),...
-2020-01-01 00:00:00,0.25,0.30,...
-2020-01-01 01:00:00,0.26,0.31,...
-```
+**Output**:
+- A single CSV with TIMESTAMP as the index and one column per station-variable time series
 
 **Output format**:
 - Index: TIMESTAMP (pandas DatetimeIndex, written as the first CSV column)
-- Columns: One column per station-variable pair
-  - Single variable: `"STATION_ID (unit)"` (e.g., `"FI-Lom (m3/m3)"`)
-  - Multiple variables: `"STATION_ID_VARIABLE (unit)"` (e.g., `"FI-Lom_SWC_1 (m3/m3)"`)
-  - With `--resample` and multiple `--agg`: `"STATION_ID_VARIABLE_AGG (unit)"` (e.g., `"FI-Lom_SWC_1_MEAN (m3/m3)"`)
+- Columns: `STATION_ID_VARIABLE (unit)` (e.g., `FI-Lom_SWC_1 (m3/m3)`, `FI-Lom_GPP (gC/m2/s)`)
+  - With `--resample` and multiple `--agg`: `STATION_ID_VARIABLE_AGG (unit)` (e.g., `FI-Lom_SWC_1_MEAN (m3/m3)`)
 - Units: Inferred from ICOS data object metadata
-- Missing values: Empty cells where data is not available
+- Missing values: Empty cells where data is not available. Note that SWC and GPP come from different data objects, so their time spans may differ — the index is the union of timestamps.
+
+**Sample output**:
+```
+TIMESTAMP,FI-Lom_SWC_1 (m3/m3),FI-Lom_GPP (gC/m2/s),...
+2020-01-01 00:00:00,0.25,-0.12,...
+2020-01-01 01:00:00,0.26,-0.10,...
+```
 
 ## Workflow
 
-1. **Discover stations**:
-   ```bash
-   python evaluation_icos.py
-   ```
+### Soil moisture and GPP in one file
 
-2. **Review the output CSV files** to see which stations have soil moisture data and which levels are available.
+1. **Discover stations** (the default queries both data types):
+   ```bash
+   python metadata.py
+   ```
+   This writes `stations_sm.csv`, `stations_flux.csv`, and `stations_combined.csv`.
+
+2. **Review the output CSV files** to see which stations have both SWC and GPP, and which soil levels are available.
 
 3. **Authenticate** (if you want to download data):
    ```bash
    python -c "from icoscp_core.icos import auth; auth.init_config_file()"
    ```
 
-4. **Download data**:
+4. **Download both in a single run**:
    ```bash
-   # Download SWC_1 from all stations:
-   python download_soil_moisture.py
-   
-   # Download SWC_1, SWC_2, SWC_3 from all stations:
-   python download_soil_moisture.py --variables SWC_1,SWC_2,SWC_3
-   
-   # Download all soil layers using family prefix:
-   python download_soil_moisture.py --variables SWC
-   
-   # Download multiple variables including GPP:
-   python download_soil_moisture.py --variables SWC_1,GPP
-   
-   # Resample to daily means:
-   python download_soil_moisture.py --variables SWC_1 --resample 1D
-   
-   # Daily mean and standard deviation:
-   python download_soil_moisture.py --variables SWC_1 --resample 1D --agg mean,std
+   python download.py --input-csv stations_combined.csv --variables SWC_1,GPP --output gpp_sm_timeseries.csv
    ```
+   Add `--resample 1D` (and optionally `--agg mean,std`) for daily aggregates.
+
+### Soil moisture only
+
+```bash
+python metadata.py --datatype etcL2Meteo
+python download.py --variables SWC
+```
+
+### Fluxes only
+
+```bash
+python metadata.py --datatype etcL2Flux
+python download.py --input-csv stations_flux.csv --variables GPP,NEE
+```
 
 ## Data Information
 
@@ -202,19 +239,27 @@ TIMESTAMP,FI-Lom (m3/m3),FR-Hes (m3/m3),...
 - **SWC_1, SWC_2, ...** - Soil Water Content at different depths
 - The number of available levels varies by station (typically 1-7 levels)
 - Values are typically in m³/m³ (volumetric water content)
+- Source: ETC L2 Meteo
+
+### Flux Variables
+- **GPP** - Gross Primary Production
+- **NEE** - Net Ecosystem Exchange
+- **RE** - Ecosystem Respiration (plus other fluxes such as LE, H, ...)
+- Source: ETC L2 Flux
 
 ### Data Format
-- The source data is in ETC L2 Meteo format (Level 2, Quality Controlled)
-- Time series data includes timestamps and measurements at regular intervals
+- The source data is in ETC L2 format (Level 2, Quality Controlled)
+- Time series are at the station's native reporting frequency
 - Missing values may occur depending on station operation
 
 ## Notes
 
-- **78 ecosystem stations** currently have soil moisture data available
+- **~78 ecosystem stations** currently have soil moisture data available (count varies over time)
 - Data is distributed across European countries (FI, SE, DE, FR, IT, etc.)
 - Some stations have measurements at multiple soil depths
-**Note**: Authentication is required only for data download, not for station discovery
+- Authentication is required only for data download, not for station discovery
 - The scripts use the official `icoscp_core` and `icoscp` Python libraries
+- Files left over from an older version of these scripts (e.g. `station_metadata.csv`, `stations_soil_moisture.csv`) are no longer produced and can be deleted
 
 ## Quick Authentication Test
 
@@ -245,7 +290,7 @@ Then run: `python test_auth.py`
 ### "Authentication error" when downloading
 
 **If using a token**:
-1. Make sure the token format is correct: `--cpauthtoken cpauthToken=YOUR_TOKEN_VALUE`
+1. Make sure the token format is correct: `--cpauthtoken cpauthToken=cpauthToken_TOKEN_VALUE`
 2. Ensure the `cpauthToken=` prefix is included
 3. Check that the token hasn't expired (tokens last ~27 hours)
 4. Verify you have accepted the ICOS Data Licence in your profile
@@ -254,11 +299,20 @@ Then run: `python test_auth.py`
 1. Verify the credentials file was created correctly
 2. Re-initialize with: `python -c "from icoscp_core.icos import auth; auth.init_config_file()"`
 
-### "No stations found"
-Run `evaluation_icos.py` first to create the required CSV files.
+### "Input file not found"
 
-### Specific soil layer not available
-Check `stations_soil_moisture.csv` to see which SWC levels each station has. Not all stations have all levels.
+Run `metadata.py` first to create the station CSVs, then pass the right one via `--input-csv`:
+- `stations_sm.csv` - soil moisture only
+- `stations_flux.csv` - fluxes only
+- `stations_combined.csv` - both (written when multiple data types are queried)
+
+### "No stations found"
+
+Check the `--datatype` and `--variable-pattern` arguments of `metadata.py` — a too-restrictive variable filter (e.g. `--variable-pattern GPP` while querying `etcL2Meteo`) matches no stations.
+
+### Specific soil layer or variable not available
+
+Check the corresponding CSV to see which variables each station has (`stations_sm.csv` for SWC levels, `stations_flux.csv` for GPP/NEE). Not all stations have all levels or variables. In a combined run, a missing combination simply shows up as empty cells in the output.
 
 ## References
 

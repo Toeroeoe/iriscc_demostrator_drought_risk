@@ -4,17 +4,15 @@ Download ICOS station time series data (soil moisture, GPP, NEE, ...) for the
 stations listed in a CSV file.
 
 This script:
-1. Reads station data from a CSV file (default: stations_soil_moisture.csv,
-   created by evaluation_icos.py)
+1. Reads station data from a CSV file (default: stations_sm.csv,
+   created by metadata.py)
 2. Downloads the requested variables for every data object of each station
 3. Combines all data into a single CSV with one column per
    station-variable time series
 
 Output Format:
 - TIMESTAMP as the index (pandas DatetimeIndex, written as first CSV column)
-- One column per station-variable pair:
-    - "STATION_ID (unit)"            when a single variable is downloaded
-    - "STATION_ID_VARIABLE (unit)"   when multiple variables are downloaded
+- One column per station-variable pair: "STATION_ID_VARIABLE (unit)"
     - plus "_AGG" suffixes (e.g. _MEAN, _STD) when several --agg functions
       are used together with --resample
 - Units are inferred from the ICOS data object metadata
@@ -23,26 +21,30 @@ Note: Authentication with ICOS Carbon Portal is required to download data.
 See: https://icos-carbon-portal.github.io/pylib/icoscp/authentication/
 
 Usage:
-    # Download only the first soil layer (default):
-    python download_soil_moisture.py
+    # Download only the first soil layer (default) for all stations in stations_sm.csv:
+    python download.py
 
     # Download multiple variables (soil layers and/or fluxes such as GPP):
-    python download_soil_moisture.py --variables SWC_1,SWC_2,GPP
+    python download.py --variables SWC_1,SWC_2,GPP
 
     # Download all soil layers of every station ('SWC' matches SWC_1, SWC_2, ...):
-    python download_soil_moisture.py --variables SWC
+    python download.py --variables SWC
+
+    # Soil moisture AND GPP in one output file (stations_combined.csv is written
+    # by metadata.py when multiple data types are queried):
+    python download.py --input-csv stations_combined.csv --variables SWC_1,GPP
 
     # Resample to daily means:
-    python download_soil_moisture.py --variables SWC_1 --resample 1D
+    python download.py --variables SWC_1 --resample 1D
 
     # Daily mean and standard deviation:
-    python download_soil_moisture.py --variables SWC_1 --resample 1D --agg mean,std
+    python download.py --variables SWC_1 --resample 1D --agg mean,std
 
     # Limit the number of data objects processed:
-    python download_soil_moisture.py --limit 5
+    python download.py --limit 5
 
     # Specify input/output files:
-    python download_soil_moisture.py --input-csv stations_soil_moisture.csv --output soil_data.csv
+    python download.py --input-csv stations_sm.csv --output soil_data.csv
 """
 
 import os
@@ -66,8 +68,11 @@ def parse_args():
     )
     parser.add_argument(
         '--input-csv',
-        default='stations_soil_moisture.csv',
-        help='Input CSV file with station information (default: stations_soil_moisture.csv)'
+        default='stations_sm.csv',
+        help='Input CSV file with station information (default: stations_sm.csv). '
+             'Use stations_combined.csv (written by metadata.py when multiple '
+             'data types are queried) to fetch variables from all of them, '
+             'e.g. SWC and GPP, in a single run.'
     )
     parser.add_argument(
         '--output',
@@ -503,7 +508,7 @@ def main():
     # Check input file exists
     if not os.path.exists(args.input_csv):
         print(f"Error: Input file not found: {args.input_csv}")
-        print("Please run evaluation_icos.py first to create the CSV files.")
+        print("Please run metadata.py first to create the station CSV files.")
         return
 
     # Read stations from CSV
@@ -529,7 +534,7 @@ def main():
         print("\nOption 1: Initialize credentials file (recommended for local use):")
         print('  python -c "from icoscp_core.icos import auth; auth.init_config_file()"')
         print("\nOption 2: Use a token from 'My Account' page:")
-        print("  python download_soil_moisture.py --cpauthtoken YOUR_TOKEN_HERE")
+        print("  python download.py --cpauthtoken YOUR_TOKEN_HERE")
         print("  (Make sure token includes 'cpauthToken=' prefix)")
         print()
 

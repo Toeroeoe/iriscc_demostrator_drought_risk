@@ -1,5 +1,5 @@
 """
-Offline tests for download_soil_moisture.py.
+Offline tests for download.py.
 
 The ICOS Dobj class is replaced with a FakeDobj backed by an in-memory
 registry, so no network access or ICOS credentials are needed.

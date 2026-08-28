@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
 Discover ICOS stations and their available variables from specified data types.
-Creates two CSV files:
-1. stations_list.csv - List of stations with the requested variables
-2. station_metadata.csv - Metadata including coordinates for all discovered stations
+Creates one CSV file per queried data type (e.g. stations_sm.csv for etcL2Meteo,
+stations_flux.csv for etcL2Flux). When multiple data types are queried, an
+additional stations_combined.csv is written that lists, for each station, the
+union of all data object URIs across data types. This allows download.py to
+fetch e.g. soil moisture (SWC) and GPP in a single run into one output file.
 
 Note: This script uses icoscp_core for metadata access. Data downloading requires authentication
 with ICOS Carbon Portal (see documentation at https://icos-carbon-portal.github.io/pylib/icoscp/authentication/)
@@ -27,12 +29,15 @@ Usage:
     # Filter for GPP and NEE:
     python metadata.py --variable-pattern GPP,NEE
     
+    # Then download soil moisture and GPP from the combined station list
+    # (stations_combined.csv) into a single output file:
+    python download.py --input-csv stations_combined.csv --variables SWC_1,GPP
+    
     # Show help:
     python metadata.py --help
 """
 
 import os
-import re
 import csv
 import argparse
 from datetime import datetime
@@ -213,37 +218,6 @@ def get_all_stations_metadata(station_ids):
     return result
 
 
-def create_station_metadata_csv(stations_with_sm, station_metadata, output_path):
-    """
-    Create a CSV file with station metadata including coordinates and landcover.
-    """
-    print(f"\nCreating station metadata CSV: {output_path}")
-    
-    fieldnames = ['station_uri', 'station_id', 'station_name', 'latitude', 'longitude', 
-                  'elevation', 'country_code', 'ecosystem_type', 'soil_moisture_variables']
-    
-    with open(output_path, 'w', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        
-        for station_id, station_uri, soil_cols, objs in stations_with_sm:
-            metadata = station_metadata.get(station_id, {})
-            row = {
-                'station_uri': station_uri,
-                'station_id': station_id,
-                'station_name': metadata.get('station_name', ''),
-                'latitude': metadata.get('latitude', ''),
-                'longitude': metadata.get('longitude', ''),
-                'elevation': metadata.get('elevation', ''),
-                'country_code': metadata.get('country_code', ''),
-                'ecosystem_type': metadata.get('ecosystem_type', 'Ecosystem (ES)'),
-                'soil_moisture_variables': '; '.join(soil_cols)
-            }
-            writer.writerow(row)
-    
-    print(f"  Wrote {len(stations_with_sm)} stations to {output_path}")
-
-
 def create_stations_csv(stations, station_metadata, output_path, variable_label="variables"):
     """
     Create a CSV file listing stations and their variables.
@@ -278,28 +252,6 @@ def create_stations_csv(stations, station_metadata, output_path, variable_label=
             writer.writerow(row)
     
     print(f"  Wrote {len(stations)} stations to {output_path}")
-
-
-def print_station_summary(stations_with_sm, station_metadata):
-    """
-    Print a summary of stations with soil moisture data.
-    """
-    print("\n" + "=" * 70)
-    print("Stations with Soil Moisture Data Summary")
-    print("=" * 70)
-    
-    for station_id, station_uri, soil_cols, objs in stations_with_sm:
-        metadata = station_metadata.get(station_id, {})
-        name = metadata.get('station_name', station_id)
-        country = metadata.get('country_code', '')
-        lat = metadata.get('latitude', '')
-        lon = metadata.get('longitude', '')
-        
-        print(f"\n  Station: {name} ({station_id})")
-        print(f"    Country: {country}")
-        print(f"    Coordinates: {lat}, {lon}")
-        print(f"    Soil moisture variables: {', '.join(soil_cols)}")
-        print(f"    Data objects: {len(objs)}")
 
 
 def main():
@@ -380,12 +332,40 @@ def main():
         csv_path = os.path.join(output_dir, filename)
         create_stations_csv(stations, station_metadata, csv_path, label)
     
+    # When multiple data types were queried, also write a combined CSV with
+    # the union of data object URIs per station, so download.py can fetch
+    # variables from all data types (e.g. SWC and GPP) in a single run.
+    combined_written = False
+    if len(output_files) > 1:
+        combined = {}
+        for station_id, station_uri, variables, objs in all_stations:
+            entry = combined.setdefault(
+                station_id,
+                {'uri': station_uri, 'variables': set(), 'objects': []}
+            )
+            entry['variables'].update(variables)
+            entry['objects'].extend(objs)
+        combined_stations = [
+            (sid, data['uri'], sorted(data['variables']), data['objects'])
+            for sid, data in combined.items()
+        ]
+        create_stations_csv(
+            combined_stations,
+            station_metadata,
+            os.path.join(output_dir, 'stations_combined.csv'),
+            'variables'
+        )
+        combined_written = True
+    
     # Summary
     print("\n" + "=" * 70)
     print("Discovery Summary:")
     for filename, (stations, _) in output_files.items():
         print(f"  - {filename}: {len(stations)} stations")
     print("\nTo download data:")
+    if combined_written:
+        print("  # combined file (all queried data types in one run, e.g. SM + GPP):")
+        print("  python download.py --input-csv stations_combined.csv --variables SWC_1,GPP")
     for filename in output_files.keys():
         print(f"  python download.py --input-csv {filename} --variables YOUR_VARIABLES")
     print("=" * 70)
