@@ -343,3 +343,44 @@ def test_read_stations_from_csv(tmp_path):
     assert len(stations) == 1
     assert stations[0]['station_id'] == 'ST1'
     assert stations[0]['data_object_uris'] == 'uri1'
+
+
+# ---------------------------------------------------------------------------
+# unit conversion integration
+# ---------------------------------------------------------------------------
+
+def test_parse_unit_overrides():
+    assert dsm.parse_unit_overrides(None) == {}
+    assert dsm.parse_unit_overrides([]) == {}
+    assert dsm.parse_unit_overrides(['GPP:gC/m2/d']) == {'GPP': 'gC/m2/d'}
+    assert dsm.parse_unit_overrides([' GPP : gC/m2/d ', 'NEE:gC/m2/h']) == {
+        'GPP': 'gC/m2/d',
+        'NEE': 'gC/m2/h',
+    }
+    with pytest.raises(ValueError):
+        dsm.parse_unit_overrides(['GPP'])
+    with pytest.raises(ValueError):
+        dsm.parse_unit_overrides([':gC/m2/d'])
+
+
+def test_end_to_end_unit_conversion(fake_dobj, tmp_path):
+    fake_dobj({
+        'uri1': {
+            'columns': ['TIMESTAMP', 'GPP'],
+            'data': make_df(GPP=[1.0] * 8),
+            'units': {'GPP': 'g C/m2/s'},
+        },
+    })
+    stations = [make_station(['uri1'])]
+
+    df, units = dsm.process_stations(stations, ['GPP'])
+    df, units = dsm.apply_unit_conversions(df, units)
+
+    assert units == {'GPP': 'gC/m2/d'}
+    assert df[('ST1', 'GPP')].iloc[0] == pytest.approx(86400.0)
+
+    out_path = tmp_path / 'out.csv'
+    dsm.write_timeseries_csv(df, str(out_path), units)
+    back = pd.read_csv(out_path, index_col=0, parse_dates=True)
+    assert list(back.columns) == ['ST1_GPP (gC/m2/d)']
+    assert back['ST1_GPP (gC/m2/d)'].iloc[0] == pytest.approx(86400.0)
