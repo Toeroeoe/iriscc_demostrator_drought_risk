@@ -6,8 +6,11 @@ Returns:
 
 from datetime import date, timedelta
 
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+import pandas as pd
 from matplotlib.colors import ListedColormap, BoundaryNorm
+from matplotlib.font_manager import FontProperties
 import numpy as np
 import re
 from shared import (
@@ -27,6 +30,10 @@ from shared import (
     gauge_meta,
     get_gauge_discharge,
     images,
+    eval_station_meta,
+    eval_map_html,
+    EVAL_VARIABLES,
+    get_eval_series,
 )
 from shiny import App, render, ui
 from shiny.types import ImgData
@@ -412,25 +419,83 @@ page_legal = ui.page_fluid(
     style="text-align: left; padding: 20px;",
 )
 
-# ── Model-evaluation page ─────────────────────────────────────────────────────
+# ── Model-evaluation page ────────────────────────────────────────────────────
 
-page_model_evaluation = ui.page_fluid(
-    ui.h2("Model evaluation with RI data."),
-    "Here comparison of both model outputs" + "with observations will be shown.",
-    ui.layout_columns(
-        ui.card(ui.output_image("elter_logo")),
-        ui.card(ui.output_image("iriscc_logo")),
-        ui.card(ui.output_image("icos_logo")),
-        col_widths=(4, 4, 4),
-        style="align-items: center;",
+# Station dropdown choices for the evaluation page (graceful when the data
+# files have not been downloaded yet).
+if eval_station_meta is not None and len(eval_station_meta) > 0:
+    _eval_station_choices = dict(
+        zip(eval_station_meta["station_id"], eval_station_meta["station_name"])
+    )
+    _eval_default_station = None  # No default station selected
+else:
+    _eval_station_choices = {}
+    _eval_default_station = None
+
+page_model_evaluation = ui.div(
+    # Intro card (full width at top)
+    ui.card(
+        ui.markdown(
+            """
+            **Model evaluation with ICOS data.** The CLM5 drought-risk model is
+            compared here with observations from the ICOS Reference
+            Infrastructure. Select a station in the sidebar or by clicking a
+            marker on the map, and choose a variable to compare the daily time
+            series, the scatter plot, and the model performance (correlation
+            and RMSE) over the period for which the station record and the
+            simulation overlap.
+            """
+        ),
+        style="text-align: left;",
     ),
-    ui.h2("Hydrological model intercomparison"),
-    ui.layout_columns(
-        ui.card(ui.output_image("clm5_smi"), height="600px"),
-        ui.card(ui.output_image("mhm_smi"), height="600px"),
-        ui.card(ui.output_image("clm5_mhm_smi_corr"), height="600px"),
-        col_widths=(4, 4, 4),
-        style="align-items: center;",
+    # Sidebar with the selection controls + interactive station map
+    ui.page_sidebar(
+        ui.sidebar(
+            "View settings",
+            ui.output_ui("eval_station_highlight"),
+            ui.input_select(
+                "eval_station",
+                "Station",
+                choices=_eval_station_choices,
+                selected="DE-RuS",  # Selhausen Juellich as default
+            ),
+            ui.input_select(
+                "eval_variable",
+                "Variable",
+                choices={
+                    "sm": "Soil moisture (SWC, %)",
+                    "gpp": "Gross primary production (GPP, gC m⁻² d⁻¹)",
+                },
+                selected="sm",
+            ),
+            open="always",
+            width="300px",
+        ),
+        ui.div(
+            ui.p(
+                "Select a station using the dropdown in the sidebar or click on a station marker in the map to compare the ICOS observations with the CLM5 simulation.",
+                style="text-align:left; color:#888; margin-bottom:6px;",
+            ),
+            # Composite panel: interactive map + scatter plot side by side on top,
+            # full-width time series below. Plots use transparent backgrounds so
+            # the panel blends into the page instead of looking like separate cards.
+            ui.div(
+                ui.div(
+                    ui.div(ui.HTML(eval_map_html), class_="eval-map-cell"),
+                    ui.div(
+                        ui.output_plot("eval_xy_plot", height=520),
+                        class_="eval-xy-cell",
+                    ),
+                    class_="eval-composite-top",
+                ),
+                ui.div(
+                    ui.output_plot("eval_timeseries_plot", height=480),
+                    class_="eval-ts-cell",
+                ),
+                class_="eval-composite",
+            ),
+            ui.output_ui("eval_caption"),
+        ),
     ),
 )
 
@@ -491,7 +556,7 @@ app_ui = ui.page_fluid(
                     .bslib-sidebar-layout .sidebar {
                         font-family: Inter, system-ui, -apple-system, sans-serif;
                     }
-                    
+
                     /* Sidebar styling - applied by default in both states */
                     .bslib-sidebar-layout aside.sidebar {
                         position: static;
@@ -504,7 +569,7 @@ app_ui = ui.page_fluid(
                         padding: 10px !important;
                         transition: position 0.3s ease, left 0.3s ease;
                     }
-                    
+
                     /* Style the sidebar header/title with grey background only */
                     .bslib-sidebar-layout aside.sidebar .sidebar-header,
                     .bslib-sidebar-layout aside.sidebar header {
@@ -518,17 +583,17 @@ app_ui = ui.page_fluid(
                         position: relative;
                         top: -10px;
                     }
-                    
+
                     /* Ensure sidebar content area starts after the header */
                     .bslib-sidebar-layout aside.sidebar > div {
                         margin-top: 0;
                     }
-                    
+
                     /* Align sidebar and main content at the top */
                     .bslib-sidebar-layout > .row {
                         align-items: flex-start;
                     }
-                    
+
                     /* Ensure main content aligns vertically with sidebar */
                     .bslib-sidebar-layout .main {
                         padding-top: 0;
@@ -554,69 +619,77 @@ app_ui = ui.page_fluid(
                     .card-body {
                         font-family: Inter, system-ui, -apple-system, sans-serif;
                     }
+
+                    /* Model evaluation: composite panel (map + scatter on top,
+                       full-width time series below), blending into the page */
+                    .eval-composite {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 12px;
+                        max-width: 100%;
+                        overflow-x: hidden;
+                    }
+                    .eval-composite-top {
+                        display: grid;
+                        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+                        gap: 12px;
+                        align-items: start;
+                        width: 100%;
+                    }
+                    .eval-map-cell,
+                    .eval-xy-cell,
+                    .eval-ts-cell {
+                        min-width: 0;
+                        width: 100%;
+                    }
+                    .eval-map-cell #eval-map {
+                        max-width: none !important;
+                        margin: 0 !important;
+                    }
+                    .eval-composite img {
+                        width: 100% !important;
+                        height: auto !important;
+                        display: block;
+                    }
                 """),
-                # JavaScript for scroll-based sidebar behavior
+                # JavaScript for scroll-based sidebar behavior.
+                # The app contains one sidebar layout per page; always operate
+                # on the layout that is currently visible.
                 ui.tags.script("""
                 document.addEventListener('DOMContentLoaded', function() {
-                    const sidebar = document.querySelector('.bslib-sidebar-layout aside.sidebar');
-                    const sidebarLayout = document.querySelector('.bslib-sidebar-layout');
-
-                    if (!sidebar || !sidebarLayout) {
-                        console.log('Sidebar elements not found');
-                        return;
+                    function getVisibleLayout() {
+                        const layouts = document.querySelectorAll('.bslib-sidebar-layout');
+                        for (const layout of layouts) {
+                            if (layout.offsetWidth > 0) return layout;
+                        }
+                        return null;
                     }
-
-                    // Find the outer container (parent of page_sidebar)
-                    let container = sidebar.closest('.bslib-sidebar-layout');
-                    if (container) {
-                        container = container.parentNode;
-                    }
-
-                    if (!container) {
-                        console.log('Container not found');
-                        return;
-                    }
-
-                    // Get the intro card (first direct child .card)
-                    const introCard = Array.from(container.children).find(child =>
-                        child.classList && child.classList.contains('card')
-                    );
-
-                    if (!introCard) {
-                        console.log('Intro card not found');
-                        return;
-                    }
-
-                    // Calculate trigger point (bottom of intro card + buffer)
-                    function getTriggerPoint() {
-                        const rect = introCard.getBoundingClientRect();
-                        return window.pageYOffset + rect.top + rect.height + 30;
-                    }
-
-                    // Get the sidebar's position from viewport left edge (accounts for all padding/frames)
-                    function getNaturalLeft() {
-                        const rect = sidebar.getBoundingClientRect();
-                        return rect.left;
-                    }
-
-                    // Store the natural left position
-                    let naturalLeft = getNaturalLeft();
-
-                    // Recalculate on resize (layout might change)
-                    window.addEventListener('resize', () => {
-                        naturalLeft = getNaturalLeft();
-                        handleScroll();
-                    });
 
                     function handleScroll() {
+                        const sidebarLayout = getVisibleLayout();
+                        if (!sidebarLayout) return;
+                        const sidebar = sidebarLayout.querySelector('aside.sidebar');
+                        if (!sidebar) return;
+
+                        // Outer container (parent of page_sidebar)
+                        const container = sidebarLayout.parentNode;
+                        if (!container) return;
+
+                        // Intro card: first direct child .card of the page
+                        const introCard = Array.from(container.children).find(child =>
+                            child.classList && child.classList.contains('card')
+                        );
+                        if (!introCard) return;
+
+                        const rect = introCard.getBoundingClientRect();
+                        const triggerPoint = window.pageYOffset + rect.top + rect.height + 30;
                         const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
-                        const shouldBeFixed = scrollTop > getTriggerPoint();
+                        const shouldBeFixed = scrollTop > triggerPoint;
                         const isCurrentlyFixed = sidebar.classList.contains('is-fixed');
 
                         if (shouldBeFixed && !isCurrentlyFixed) {
-                            // Capture the current left position from viewport (accounts for all padding/frames)
-                            naturalLeft = getNaturalLeft();
-                            sidebar.style.left = naturalLeft + 'px';
+                            // Pin the sidebar in place (left from viewport edge)
+                            sidebar.style.left = sidebar.getBoundingClientRect().left + 'px';
                             sidebar.classList.add('is-fixed');
                             sidebarLayout.classList.add('is-scrolled');
                         } else if (!shouldBeFixed && isCurrentlyFixed) {
@@ -626,6 +699,7 @@ app_ui = ui.page_fluid(
                         }
                     }
 
+                    window.addEventListener('resize', handleScroll, { passive: true });
                     window.addEventListener('scroll', handleScroll, { passive: true });
                     handleScroll(); // Initial check
                 });
@@ -633,7 +707,7 @@ app_ui = ui.page_fluid(
     ),
     ui.layout_columns(
         ui.h1(
-            "Risk on terrestrial ecosystems functioning to droughts",
+            "Drought risk on terrestrial ecosystems functioning",
             style="text-align: center;",
         ),
         ui.output_image("iriscc_logo_title", inline=True),
@@ -689,6 +763,60 @@ app_ui = ui.page_fluid(
 )
 
 
+# ── Model-evaluation helpers (ICOS observations vs CLM5) ─────────────────────
+
+# ISO 3166-1 alpha-2 country codes used as the prefix of ICOS station IDs.
+COUNTRY_NAMES = {
+    "BE": "Belgium",
+    "CD": "Democratic Republic of the Congo",
+    "CH": "Switzerland",
+    "CZ": "Czechia",
+    "DE": "Germany",
+    "DK": "Denmark",
+    "ES": "Spain",
+    "FI": "Finland",
+    "FR": "France",
+    "GF": "French Guiana",
+    "GL": "Greenland",
+    "GR": "Greece",
+    "IE": "Ireland",
+    "IT": "Italy",
+    "NL": "Netherlands",
+    "NO": "Norway",
+    "SE": "Sweden",
+    "UK": "United Kingdom",
+}
+
+
+def _eval_station_name(station_id: str) -> str:
+    """Human-readable station name, falling back to the station ID."""
+    if eval_station_meta is not None:
+        row = eval_station_meta[eval_station_meta["station_id"] == station_id]
+        if not row.empty:
+            return str(row.iloc[0]["station_name"])
+    return station_id
+
+
+def _eval_monthly_stats(icos, clm5):
+    """Pearson r and RMSE of CLM5 vs ICOS on monthly means of the overlap period."""
+    if icos is None or clm5 is None:
+        return None
+    joined = pd.concat(
+        {"obs": icos.resample("ME").mean(), "sim": clm5.resample("ME").mean()}, axis=1
+    ).dropna()
+    if len(joined) < 3:
+        return None
+    o = joined["obs"].to_numpy(dtype=float)
+    s = joined["sim"].to_numpy(dtype=float)
+    return {
+        "r": float(np.corrcoef(o, s)[0, 1]),
+        "rmse": float(np.sqrt(np.mean((s - o) ** 2))),
+        "n": int(len(joined)),
+        "obs": joined["obs"],
+        "sim": joined["sim"],
+    }
+
+
 def server(input, output, session) -> None:
     """Shiny server function.
 
@@ -708,8 +836,8 @@ def server(input, output, session) -> None:
         """Return a small figure showing an informational message."""
         c = theme_config.colors
         fig, ax = plt.subplots(figsize=(4, 1.5))
-        fig.patch.set_facecolor(c["background"])
-        ax.set_facecolor(c["background"])
+        fig.patch.set_alpha(0)
+        ax.set_facecolor("none")
         ax.text(
             0.5,
             0.5,
@@ -1396,11 +1524,10 @@ def server(input, output, session) -> None:
             facecolor=c["background"],
             edgecolor=c["border"],
             labelcolor=c["text"],
-            fontsize=tc.font_sizes['small'],
-            family=tc.get_font_family('body'),
+            prop=FontProperties(family=tc.get_font_family('body'), size=tc.font_sizes['small']),
             framealpha=0.9
         )
-        ax.grid(True, color=c["border"], alpha=0.3, linewidth=0.5)
+        ax.grid(True, color="#ffffff", alpha=0.25, linewidth=0.7, zorder=0)
         # Prevent Shiny from calling tight_layout which can cause issues
         fig.tight_layout = lambda *a, **kw: None
         return fig
@@ -1546,64 +1673,304 @@ def server(input, output, session) -> None:
         }
         return img
 
-    @render.image
-    def iriscc_logo():
-        img: ImgData = {
-            "src": f"{images}/iriscc-logo-full-horizontal-fullcolor.png",
-            "alt": "IRISCC logo",
-            "width": "130px",
-        }
-        return img
+    # ── Model evaluation: ICOS reference observations vs CLM5 ────────────────
 
-    @render.image
-    def elter_logo():
-        img: ImgData = {
-            "src": f"{images}/eLTER_Logo.png",
-            "alt": "eLTER logo",
-            "style": "background-color: white;",
-            "width": "130px",
-        }
-        return img
+    @render.ui
+    def eval_station_highlight():
+        """Highlighted station info at the top of the sidebar (similar to reference period)."""
+        try:
+            station_id = input.eval_station()
+        except Exception:
+            return None
+        if station_id is None or eval_station_meta is None:
+            return ui.div(
+                ui.tags.strong(f"Station ID: {station_id}", style="font-size: 0.85em;"),
+                style=(
+                    "border: 1px solid #f0ad4e; "
+                    "border-left: 4px solid #f0ad4e; "
+                    "background-color: rgba(240, 173, 78, 0.12); "
+                    "border-radius: 6px; "
+                    "padding: 10px 12px; "
+                    "margin-bottom: 14px; "
+                    "text-align: left;"
+                ),
+            )
+        row = eval_station_meta[eval_station_meta["station_id"] == station_id]
+        if row.empty:
+            return None
+        r = row.iloc[0]
+        country = COUNTRY_NAMES.get(station_id.split("-")[0], station_id.split("-")[0])
+        return ui.div(
+            ui.tags.strong(f"Station ID: {station_id}", style="font-size: 0.85em;"),
+            ui.tags.br(),
+            ui.tags.span(f"Country: {country}", style="font-size: 0.75em;"),
+            ui.tags.br(),
+            ui.tags.span(
+                f"Coords: {r['latitude']:.2f}° N, {r['longitude']:.2f}° E",
+                style="font-size: 0.75em;",
+            ),
+            ui.tags.br(),
+            ui.tags.span(
+                f"CLM5 cell: {r['cell_latitude']:.2f}° N, {r['cell_longitude']:.2f}° E",
+                style="font-size: 0.75em;",
+            ),
+            ui.tags.br(),
+            ui.tags.span(
+                f"Distance: {r['distance_km']:.1f} km",
+                style="font-size: 0.75em;",
+            ),
+            style=(
+                "border: 1px solid #f0ad4e; "
+                "border-left: 4px solid #f0ad4e; "
+                "background-color: rgba(240, 173, 78, 0.12); "
+                "border-radius: 6px; "
+                "padding: 10px 12px; "
+                "margin-bottom: 14px; "
+                "text-align: left;"
+            ),
+        )
 
-    @render.image
-    def icos_logo():
-        img: ImgData = {
-            "src": f"{images}/ICOS RI_logo_rgb.png",
-            "alt": "ICOS RI logo",
-            "style": "background-color: white;",
-            "width": "130px",
-        }
-        return img
+    @render.ui
+    def eval_site_info():
+        """Metadata panel for the selected ICOS station (without station name/ID)."""
+        try:
+            station_id = input.eval_station()
+        except Exception:
+            return None
+        if station_id is None or eval_station_meta is None:
+            return ui.markdown(
+                "*Evaluation data not available — download the files with "
+                "`evaluation/download.py` first.*"
+            )
+        row = eval_station_meta[eval_station_meta["station_id"] == station_id]
+        if row.empty:
+            return None
+        r = row.iloc[0]
+        country = COUNTRY_NAMES.get(station_id.split("-")[0], station_id.split("-")[0])
+        fields = [
+            ("Country", country),
+            ("Coordinates", f"{r['latitude']:.2f}°, {r['longitude']:.2f}°"),
+            ("CLM5 cell centre", f"{r['cell_latitude']:.2f}°, {r['cell_longitude']:.2f}°"),
+            ("Station → cell", f"{r['distance_km']:.1f} km"),
+        ]
+        html_rows = "".join(
+            f"<tr><td style='padding: 2px 14px 2px 0; color: #999;'>{k}</td>"
+            f"<td style='padding: 2px 0;'>{v}</td></tr>"
+            for k, v in fields
+        )
+        return ui.HTML(
+            f"<table style='width: 100%; font-size: 13px; margin-top: 12px; "
+            f"border-collapse: collapse;'>{html_rows}</table>"
+        )
 
-    @render.image
-    def clm5_smi():
-        img: ImgData = {
-            "src": f"{images}/CLM5_SMI_2003_07.nc-1.png",
-            "alt": "CLM5 SMI",
-            "style": "background-color: white;",
-            "width": "500px",
-        }
-        return img
+    @render.plot
+    def eval_timeseries_plot():
+        """Daily ICOS vs CLM5 time series with monthly-mean overlay and stats."""
+        try:
+            station_id = input.eval_station()
+            variable = input.eval_variable()
+        except Exception:
+            return None
+        if station_id is None or variable not in EVAL_VARIABLES:
+            return None
+        spec = EVAL_VARIABLES[variable]
+        icos, clm5 = get_eval_series(station_id, variable)
+        if icos is None or clm5 is None or len(icos) < 2:
+            return _message_fig(f"No {spec['label']} data available for {station_id}.")
 
-    @render.image
-    def mhm_smi():
-        img: ImgData = {
-            "src": f"{images}/mHM_SMI_2003_07.nc-1.png",
-            "alt": "mHM SMI",
-            "style": "background-color: white;",
-            "width": "500px",
-        }
-        return img
+        tc = get_theme_config("dark")
+        c = tc.colors
 
-    @render.image
-    def clm5_mhm_smi_corr():
-        img: ImgData = {
-            "src": f"{images}/smi_correlation_mhm_vs_clm5-1.png",
-            "alt": "CLM5 mHM SMI correlation",
-            "style": "background-color: white;",
-            "width": "500px",
-        }
-        return img
+        # Reindex to complete date range to insert NaN at gaps (prevents lines across missing data)
+        full_idx = pd.date_range(icos.index.min(), icos.index.max(), freq="D")
+        icos = icos.reindex(full_idx)
+        clm5 = clm5.reindex(full_idx)
+
+        # Monthly means - DON'T dropna, preserve NaN months as gaps
+        icos_mo = icos.resample("ME").mean()
+        clm5_mo = clm5.resample("ME").mean()
+
+        # For statistics, use only non-NaN data
+        stats = _eval_monthly_stats(icos.dropna(), clm5.dropna())
+
+        # Check for sufficient overlap (same threshold as XY plot)
+        if stats is None:
+            return _message_fig(f"Overlap shorter than 3 months for {station_id} — too few monthly means for statistics.")
+
+        fig, ax = plt.subplots(figsize=(13.3, 4.8))
+        fig.patch.set_alpha(0)
+        ax.set_facecolor("none")
+
+        # Hydrograph blue (#4dabf7) for ICOS to match the hydrograph section, thicker monthly lines
+        ax.plot(icos.index, icos.values, color="#4dabf7", linewidth=0.8, alpha=0.7, label="ICOS (daily)")
+        ax.plot(clm5.index, clm5.values, color="#bb86fc", linewidth=0.8, alpha=0.65, label="CLM5 (daily)")
+        ax.plot(icos_mo.index, icos_mo.values, color="#4dabf7", linewidth=2.8, label="ICOS (monthly mean)")
+        ax.plot(clm5_mo.index, clm5_mo.values, color="#bb86fc", linewidth=2.8, label="CLM5 (monthly mean)")
+
+        ax.set_ylabel(f"{spec['abbr']} ({spec['unit']})", color=c["text"], fontsize=tc.font_sizes["base"], family=tc.get_font_family("mono"))
+        ax.set_xlabel("Date", color=c["text"], fontsize=tc.font_sizes["base"], family=tc.get_font_family("mono"))
+        ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax.tick_params(colors=c["text"], labelsize=tc.font_sizes["small"])
+        plt.setp(ax.get_xticklabels(), ha="center", family=tc.get_font_family("mono"))
+        plt.setp(ax.get_yticklabels(), family=tc.get_font_family("mono"))
+        # Hide spines for modern look
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.grid(True, color="#ffffff", alpha=0.25, linewidth=0.7, zorder=0)
+        ax.legend(
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.12),
+            ncol=4,
+            frameon=False,
+            handlelength=1.5,
+            labelcolor=c["text"],
+            prop=FontProperties(family=tc.get_font_family("mono"), size=tc.font_sizes["small"]),
+        )
+        if stats is not None:
+            ax.text(
+                0.99,
+                0.03,
+                f"r = {stats['r']:.2f}   RMSE = {stats['rmse']:.3f} {spec['unit']}   (monthly means, n = {stats['n']})",
+                transform=ax.transAxes,
+                ha="right",
+                va="bottom",
+                color=c["text"],
+                fontsize=tc.font_sizes["small"],
+                family=tc.get_font_family("mono"),
+                bbox=dict(boxstyle="round,pad=0.35", facecolor=c["background"], edgecolor=c["border"], alpha=0.9),
+            )
+        fig.tight_layout = lambda *a, **kw: None
+        return fig
+
+    @render.plot
+    def eval_xy_plot():
+        """CLM5 vs ICOS scatter (monthly means) with 1:1 reference line."""
+        try:
+            station_id = input.eval_station()
+            variable = input.eval_variable()
+        except Exception:
+            return None
+        if station_id is None or variable not in EVAL_VARIABLES:
+            return None
+        spec = EVAL_VARIABLES[variable]
+        icos, clm5 = get_eval_series(station_id, variable)
+        stats = _eval_monthly_stats(icos, clm5)
+        if icos is None or clm5 is None or len(icos) < 2:
+            return _message_fig(f"No {spec['label']} data available for {station_id}.")
+        if stats is None:
+            return _message_fig(f"Overlap shorter than 3 months for {station_id} — too few monthly means to compare.")
+
+        tc = get_theme_config("dark")
+        c = tc.colors
+        o, s = stats["obs"], stats["sim"]
+
+        fig, ax = plt.subplots(figsize=(6.5, 5.2))
+        fig.patch.set_alpha(0)
+        ax.set_facecolor("none")
+
+        ax.scatter(o, s, s=25, color="#4dabf7", alpha=0.75, edgecolors="none", label="monthly means")
+        lo, hi = min(o.min(), s.min()), max(o.max(), s.max())
+        ax.plot([lo, hi], [lo, hi], color=c["text"], linestyle="--", linewidth=1, alpha=0.7, label="1:1")
+        ax.set_xlabel(f"ICOS {spec['abbr']} ({spec['unit']})", color=c["text"], fontsize=tc.font_sizes["base"], family=tc.get_font_family("mono"))
+        ax.set_ylabel(f"CLM5 {spec['abbr']} ({spec['unit']})", color=c["text"], fontsize=tc.font_sizes["base"], family=tc.get_font_family("mono"))
+        ax.tick_params(colors=c["text"], labelsize=tc.font_sizes["small"])
+        plt.setp(ax.get_xticklabels(), family=tc.get_font_family("mono"))
+        plt.setp(ax.get_yticklabels(), family=tc.get_font_family("mono"))
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.grid(True, color="#ffffff", alpha=0.25, linewidth=0.7, zorder=0)
+        ax.legend(
+            facecolor=c["background"],
+            edgecolor=c["border"],
+            labelcolor=c["text"],
+            prop=FontProperties(family=tc.get_font_family("mono"), size=tc.font_sizes["small"]),
+            framealpha=0.9,
+        )
+        ax.text(
+            0.99,
+            0.03,
+            f"r = {stats['r']:.2f}   RMSE = {stats['rmse']:.3f} {spec['unit']}",
+            transform=ax.transAxes,
+            ha="right",
+            va="bottom",
+            color=c["text"],
+            fontsize=tc.font_sizes["small"],
+            family=tc.get_font_family("mono"),
+            bbox=dict(boxstyle="round,pad=0.35", facecolor=c["background"], edgecolor=c["border"], alpha=0.9),
+        )
+        fig.tight_layout = lambda *a, **kw: None
+        return fig
+
+    @render.ui
+    def eval_caption():
+        """Descriptive caption for the model-evaluation plots."""
+        try:
+            station_id = input.eval_station()
+            variable = input.eval_variable()
+        except Exception:
+            return None
+        if station_id is None or variable not in EVAL_VARIABLES:
+            return None
+        spec = EVAL_VARIABLES[variable]
+        name = _eval_station_name(station_id)
+        country = COUNTRY_NAMES.get(station_id.split("-")[0], station_id.split("-")[0])
+        meta_row = None
+        if eval_station_meta is not None:
+            row = eval_station_meta[eval_station_meta["station_id"] == station_id]
+            if not row.empty:
+                meta_row = row.iloc[0]
+        var_text = {
+            "sm": (
+                "Soil water content of the first soil layer (SWC_1, volumetric water content in %). "
+                "ICOS values are the reference observations; CLM5 values come from the model grid cell nearest to the station."
+            ),
+            "gpp": (
+                "Gross primary production (GPP) - total carbon fixed by plant photosynthesis. "
+                "Both ICOS and CLM5 report GPP as positive carbon uptake (gC m⁻² d⁻¹)."
+            ),
+        }[variable]
+        coords = "n/a"
+        cell = "n/a"
+        if meta_row is not None:
+            coords = f"{meta_row['latitude']:.2f}°, {meta_row['longitude']:.2f}°"
+            cell = f"{meta_row['cell_latitude']:.2f}°, {meta_row['cell_longitude']:.2f}° ({meta_row['distance_km']:.1f} km from the station)"
+        icos, clm5 = get_eval_series(station_id, variable)
+        stats = _eval_monthly_stats(icos, clm5)
+
+        head = (
+            f"<strong>{spec['label'].upper()} AT {station_id}</strong><br><br>"
+            f"<strong>Station:</strong> {name} ({country})<br>"
+            f"<strong>Coordinates:</strong> {coords}<br>"
+            f"<strong>CLM5 cell:</strong> {cell}<br><br>"
+            f"{var_text}<br><br>"
+        )
+        if icos is None or clm5 is None or len(icos) < 2:
+            text = head + (
+                "No overlapping data between the ICOS reference observations and CLM5 "
+                "for this station/variable."
+            )
+        elif stats is None:
+            period = f"{icos.index.min():%Y-%m} to {icos.index.max():%Y-%m}"
+            text = head + (
+                f"<strong>Overlap period:</strong> {period}<br><br>"
+                "The overlap is shorter than 3 months, so the time series is shown, "
+                "but correlation and RMSE are not reported."
+            )
+        else:
+            period = f"{icos.index.min():%Y-%m} to {icos.index.max():%Y-%m}"
+            text = head + (
+                f"<strong>Overlap period:</strong> {period}<br><br>"
+                f"The time series shows the daily observations and simulation over the overlapping period, "
+                f"with monthly means as thick lines. The scatter plot compares monthly means of CLM5 (y-axis) "
+                f"against ICOS (x-axis) around the 1:1 line.<br><br>"
+                f"<strong>Model performance (monthly means):</strong> Pearson r = {stats['r']:.2f}, "
+                f"RMSE = {stats['rmse']:.3f} {spec['unit']} (n = {stats['n']} months)."
+            )
+        return ui.HTML(
+            f"<div style='text-align: left; color: #fff; font-size: 14px; line-height: 1.6; "
+            f"padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); "
+            f"border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}</div>"
+        )
 
 
 app = App(app_ui, server)
