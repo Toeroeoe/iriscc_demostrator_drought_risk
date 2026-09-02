@@ -24,7 +24,7 @@ class _NoOpLayoutEngine(LayoutEngine):
 COL_10YR = '#ffb020'   # bright amber - 10-yr return period
 COL_50YR = '#ff6b35'   # vivid orange-red - 50-yr return period
 COL_HYDRO = '#4dabf7'  # bright sky blue - monthly hydrograph line
-FILL_ALPHA = 0.5
+FILL_ALPHA = 0.75  # more opaque fills/bars, grid less visible through them
 LWD_MAIN = 2.5
 
 def _apply_persistence(below, k):
@@ -169,9 +169,9 @@ def _create_main_plot(ax, dec_df, s10_x, s10_y, s50_x, s50_y, hydro_x, hydro_y, 
     FS_HEADING = theme_config.font_sizes['heading']
     FS_LEGEND = theme_config.font_sizes['small']
 
-    # Fill areas first (so they're behind the line)
-    ax.fill_between(s10_x, s10_y, color=COL_10YR, alpha=FILL_ALPHA, label='10-yr', zorder=1)
-    ax.fill_between(s50_x, s50_y, color=COL_50YR, alpha=FILL_ALPHA, label='50-yr', zorder=1)
+    # Fill areas first (so they're behind the line, but above grid)
+    ax.fill_between(s10_x, s10_y, color=COL_10YR, alpha=FILL_ALPHA, label='10-yr', zorder=2)
+    ax.fill_between(s50_x, s50_y, color=COL_50YR, alpha=FILL_ALPHA, label='50-yr', zorder=2)
 
     # Plot hydrograph line - use smoothed data (no gaps)
     line = ax.plot(
@@ -234,6 +234,9 @@ def _create_main_plot(ax, dec_df, s10_x, s10_y, s50_x, s50_y, hydro_x, hydro_y, 
     # Hide all spines for modern look
     for spine in ax.spines.values():
         spine.set_visible(False)
+    
+    # Add white gridlines behind all other elements (zorder=0)
+    ax.grid(True, color="#ffffff", alpha=0.25, linewidth=0.7, zorder=0)
 
     ax.tick_params(colors=COL_TEXT)
     ax.set_facecolor('none')
@@ -283,12 +286,16 @@ def _create_total_inset(ax, dec_df, decade, palette, theme_config):
         color=[COL_10YR, COL_50YR],
         alpha=FILL_ALPHA,
         edgecolor=[COL_10YR, COL_50YR],
-        linewidth=0.8
+        linewidth=0.8,
+        zorder=3
     )
 
     # Hide all spines for modern look
     for spine in ax.spines.values():
         spine.set_visible(False)
+    
+    # Add white gridlines behind all other elements (zorder=0)
+    ax.grid(True, color="#ffffff", alpha=0.25, linewidth=0.7, zorder=0)
 
     ax.set_yticks(y_pos)
     ax.set_yticklabels(
@@ -342,17 +349,22 @@ def _create_monthly_inset(ax, dec_df, decade, palette, theme_config):
     ax.bar(
         x - width/2, counts_q10, width,
         color=COL_10YR, alpha=FILL_ALPHA,
-        edgecolor=COL_10YR, linewidth=0.8
+        edgecolor=COL_10YR, linewidth=0.8,
+        zorder=3
     )
     ax.bar(
         x + width/2, counts_q50, width,
         color=COL_50YR, alpha=FILL_ALPHA,
-        edgecolor=COL_50YR, linewidth=0.8
+        edgecolor=COL_50YR, linewidth=0.8,
+        zorder=3
     )
 
     # Hide all spines for modern look
     for spine in ax.spines.values():
         spine.set_visible(False)
+    
+    # Add white gridlines behind all other elements (zorder=0)
+    ax.grid(True, color="#ffffff", alpha=0.25, linewidth=0.7, zorder=0)
 
     ax.set_xticks(x)
     ax.set_xticklabels(

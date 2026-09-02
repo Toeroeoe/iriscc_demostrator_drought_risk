@@ -16,12 +16,11 @@ products, not in ETC L2 Meteo. See metadata.py for the product list.
 
 Output Format:
 - TIMESTAMP as the index (pandas DatetimeIndex, written as first CSV column)
-- One column per station-variable pair:
-    - "STATION_ID (unit)"            when a single variable is downloaded
-    - "STATION_ID_VARIABLE (unit)"   when multiple variables are downloaded
+- One column per station-variable pair: "STATION_ID_VARIABLE (unit)"
     - plus "_AGG" suffixes (e.g. _MEAN, _STD) when several --agg functions
       are used together with --resample
-- Units are inferred from the ICOS data object metadata
+- Units are inferred from the ICOS data object metadata; carbon fluxes
+  (GPP*/NEE*/RECO* columns by default) show their target unit instead
 
 Note: Authentication with ICOS Carbon Portal is required to download data.
 See: https://icos-carbon-portal.github.io/pylib/icoscp/authentication/
@@ -36,9 +35,9 @@ Usage:
     # Download all soil layers of every station ('SWC' matches SWC_1, SWC_2, ...):
     python download.py --variables SWC
 
-    # Download GPP from the ETC L2 Fluxnet data objects (discover them first):
-    python metadata.py --datatype etcL2Fluxnet
-    python download.py --input-csv stations_fluxnet.csv --variables GPP_NT_VUT_REF
+    # Soil moisture AND GPP in one output file (stations_combined.csv is written
+    # by metadata.py when multiple data types are queried):
+    python download.py --input-csv stations_combined.csv --variables SWC_1,GPP_NT_CUT_REF
 
     # Resample to daily means:
     python download.py --variables SWC_1 --resample 1D
@@ -46,15 +45,21 @@ Usage:
     # Daily mean and standard deviation:
     python download.py --variables SWC_1 --resample 1D --agg mean,std
 
+    # Convert a FluxNet GPP column to a target unit (GPP*/NEE*/RECO*
+    # columns default to gC/m2/d):
+    python download.py --variables GPP_NT_CUT_REF --unit GPP_NT_CUT_REF:gC/m2/h
+
+    # Keep the ICOS source units (no automatic unit conversion):
+    python download.py --variables GPP_NT_CUT_REF --no-unit-conversion
+
     # Limit the number of data objects processed:
     python download.py --limit 5
 
     # Specify input/output files:
-    python download.py --input-csv stations_soil_moisture.csv --output soil_data.csv
+    python download.py --input-csv stations_sm.csv --output soil_data.csv
 """
 
 import os
-import re
 import csv
 import argparse
 from datetime import datetime
@@ -62,9 +67,7 @@ from datetime import datetime
 import pandas as pd
 from icoscp.dobj import Dobj
 
-# Matches column labels that carry their unit in square brackets,
-# e.g. 'SWC_1 [m3/m3]'.
-UNIT_LABEL_RE = re.compile(r'^(?P<name>.+?)\s*\[(?P<unit>[^\]]+)\]$')
+from units import UNIT_LABEL_RE, apply_unit_conversions
 
 
 def parse_args():
@@ -74,8 +77,11 @@ def parse_args():
     )
     parser.add_argument(
         '--input-csv',
-        default='stations_soil_moisture.csv',
-        help='Input CSV file with station information (default: stations_soil_moisture.csv)'
+        default='stations_sm.csv',
+        help='Input CSV file with station information (default: stations_sm.csv). '
+             'Use stations_combined.csv (written by metadata.py when multiple '
+             'data types are queried) to fetch variables from all of them, '
+             'e.g. SWC and GPP, in a single run.'
     )
     parser.add_argument(
         '--output',
@@ -104,6 +110,22 @@ def parse_args():
         help="Comma-separated aggregation functions used with --resample (default: mean)"
     )
     parser.add_argument(
+        '--unit',
+        action='append',
+        default=None,
+        metavar='VAR:UNIT',
+        help="Target unit for a variable, e.g. --unit GPP_NT_CUT_REF:gC/m2/h. "
+             "Repeatable. By default the GPP*/NEE*/RECO* columns of the ETC "
+             "L2 FluxNet product are converted to gC/m2/d; all other variables "
+             "keep their ICOS source unit."
+    )
+    parser.add_argument(
+        '--no-unit-conversion',
+        action='store_true',
+        help='Disable automatic unit conversion (keep the units as reported by '
+             'ICOS, e.g. FluxNet GPP in µmol m-2 s-1).'
+    )
+    parser.add_argument(
         '--limit',
         type=int,
         default=None,
@@ -117,6 +139,32 @@ def parse_args():
              'this will be used for authentication instead of credentials file.'
     )
     return parser.parse_args()
+
+
+def parse_unit_overrides(pairs):
+    """
+    Parse repeated 'VAR:UNIT' values from --unit into a dict.
+
+    Args:
+        pairs: List of 'VAR:UNIT' strings (or None)
+
+    Returns:
+        Dict mapping variable name -> target unit
+
+    Raises:
+        ValueError: if a value is malformed
+    """
+    overrides = {}
+    for pair in pairs or []:
+        var, sep, unit = pair.partition(':')
+        var, unit = var.strip(), unit.strip()
+        if not sep or not var or not unit:
+            raise ValueError(
+                f"Invalid --unit value {pair!r}. Expected VAR:UNIT, "
+                f"e.g. GPP:gC/m2/d"
+            )
+        overrides[var] = unit
+    return overrides
 
 
 def read_stations_from_csv(csv_path):
@@ -523,7 +571,7 @@ def main():
     # Check input file exists
     if not os.path.exists(args.input_csv):
         print(f"Error: Input file not found: {args.input_csv}")
-        print("Please run evaluation_icos.py first to create the CSV files.")
+        print("Please run metadata.py first to create the station CSV files.")
         return
 
     # Read stations from CSV
@@ -561,6 +609,20 @@ def main():
     # Download data from all stations
     all_data, variable_units = process_stations(stations, requested, limit=args.limit)
 
+    # Convert units before resampling (e.g. GPP: gC/m2/s -> gC/m2/d).
+    # The conversion factor is constant, so it commutes with resampling.
+    if not args.no_unit_conversion:
+        try:
+            overrides = parse_unit_overrides(args.unit)
+        except ValueError as e:
+            print(f"Error: {e}")
+            return
+        if not all_data.empty:
+            print("\nConverting units (defaults: GPP*/NEE*/RECO* -> gC/m2/d)...")
+            all_data, variable_units = apply_unit_conversions(
+                all_data, variable_units, overrides
+            )
+
     # Optional resampling
     if not all_data.empty and args.resample:
         print(f"\nResampling to '{args.resample}' with agg={aggs}...")
@@ -588,6 +650,7 @@ def main():
     print(f"  - Stations in input: {len(stations)}")
     print(f"  - Requested variables: {requested}")
     print(f"  - Resampling: {args.resample or 'none'}")
+    print(f"  - Unit conversion: {'off' if args.no_unit_conversion else 'on'}")
     print(f"  - Output rows: {len(all_data) if all_data is not None else 0}")
     print(f"  - Output columns: {all_data.shape[1] if all_data is not None else 0}")
     print(f"  - Output file: {args.output}")

@@ -2,12 +2,14 @@
 
 This directory contains scripts to discover and download ICOS ecosystem (ES) station data at Level 2: surface soil moisture (SWC) and carbon fluxes (GPP, NEE, ...).
 
-## Overview
+- **ETC L2 Meteo** — meteorological variables, including soil water content (SWC - Soil Water Content) at various depths
+- **ETC L2 FluxNet** — ecosystem carbon fluxes in FluxNet format (`GPP_NT_CUT_REF`, `NEE_CUT_REF`, `RECO_NT_CUT_REF`, ...). **This is where GPP lives** (source unit `µmol m-2 s-1`).
+- **ETC L2 Fluxes** — ecosystem fluxes (`NEE`, `CO2`, `H`, `H2O`, `LE`, ...; source unit `g C/m2/s`). This product does **not** contain GPP.
 
 ICOS (Integrated Carbon Observation System) provides soil moisture measurements (SWC - Soil Water Content) at various depths as part of their ETC L2 Meteo data product, and carbon fluxes (GPP, NEE, H, LE) in the ETC L2 Fluxnet / ETC L2 Fluxes data products. These scripts help you:
 
-1. **Discover** which stations have soil moisture data and their metadata
-2. **Download** the actual soil moisture time series data
+1. **Discover** which stations have which variables (no authentication required)
+2. **Download** the time series data you need, including soil moisture (SWC) and GPP **combined in a single output file** (authentication required)
 
 ## Prerequisites
 
@@ -32,6 +34,7 @@ The `requirements.txt` file lists the dependencies:
 - `icoscp==0.2.3`
 - `icoscp-core==0.3.13`
 - `pandas==3.0.5`
+- `pint==0.25.3` (unit conversion, see below)
 - `pytest==9.1.1`
 
 ### 2. Authentication
@@ -57,7 +60,7 @@ Get a token from your "My Account" page at https://meta.icos-cp.eu/ and use it d
 python download.py --cpauthtoken cpauthToken=[the-actual-token-value]
 ```
 
-**Important**: Make sure to include the `cpauthToken=` prefix. The token looks like a long encoded string (e.g., `cpauthToken=WzE2OTY2NzQ5OD...]`).
+**Important**: Make sure to include the `cpauthToken=` prefix. The token looks like a long encoded string (e.g. `cpauthToken=WzE2OTY2NzQ5OD...]`).
 
 **Note**: Tokens expire after approximately 27 hours.
 
@@ -88,13 +91,7 @@ python metadata.py --variable-pattern GPP,NEE   # only stations with these varia
 - `stations_fluxnet.csv` (etcL2Fluxnet - the product that contains GPP)
 - `stations_flux.csv` (etcL2Fluxes - NEE/H/LE/CO2, no GPP)
 
-**Sample output (station_metadata.csv):**
-```csv
-station_uri,station_id,station_name,latitude,longitude,elevation,country_code,ecosystem_type,soil_moisture_variables
-http://meta.icos-cp.eu/resources/stations/ES_FI-Lom,FI-Lom,Lompolojankka (FI-Lom),67.99724,24.209179,247.0,FI,Ecosystem (ES),SWC_1
-http://meta.icos-cp.eu/resources/stations/ES_FR-Hes,FR-Hes,Hesse (FR-Hes),48.6741,7.06465,310.0,FR,Ecosystem (ES),SWC_1; SWC_2; SWC_3; SWC_4; SWC_5
-...
-```
+### 2. download.py - Download ICOS Time Series Data
 
 ### 2. download.py - Download ICOS Time Series Data
 
@@ -135,32 +132,62 @@ python download.py --help
 ```
 
 **Options**:
-- `--input-csv`: Input CSV file with station information (default: `stations_soil_moisture.csv`)
+- `--input-csv`: Input CSV file with station information (default: `stations_sm.csv`). Use `stations_combined.csv` to fetch variables from multiple data types (e.g. SWC and GPP) in one run
 - `--output`: Output CSV file for time series data (default: `icos_timeseries.csv`)
-- `--variables`: Comma-separated variable names to download (default: `SWC_1`). A bare family prefix matches all numbered variants (e.g., `SWC` matches `SWC_1`, `SWC_2`, ...)
+- `--variables`: Comma-separated variable names to download (default: `SWC_1`). A bare family prefix matches all variants starting with `<prefix>_` (e.g., `SWC` matches `SWC_1`, `SWC_2`, ...; `GPP` matches all four `GPP_*_REF` model variants — prefer the explicit name `GPP_NT_CUT_REF`)
 - `--resample`: Pandas resample rule applied after downloading (e.g., `1D` for daily). No resampling by default.
 - `--agg`: Comma-separated aggregation functions used with `--resample` (default: `mean`)
+- `--unit`: Target unit for a variable, `VAR:UNIT` (repeatable, e.g. `--unit GPP_NT_CUT_REF:gC/m2/h`). By default the `GPP*`/`NEE*`/`RECO*` columns of the FluxNet product are converted to `gC/m2/d`; all other variables keep their ICOS source unit
+- `--no-unit-conversion`: Disable automatic unit conversion (keep the units as reported by ICOS, e.g. FluxNet GPP in `µmol m-2 s-1`)
 - `--limit`: Maximum number of data objects to process (default: all)
 - `--cpauthtoken`: ICOS Carbon Portal authentication token (use for temporary access without credentials file)
 
-**Output**:
-- `icos_timeseries.csv` - Time series data with TIMESTAMP as the index and one column per station-variable time series
+**How mixed variables work**: `download.py` matches each requested variable against the columns of each data object individually — a variable that a data object does not contain is simply skipped. So with `stations_combined.csv` and `--variables SWC_1,GPP_NT_CUT_REF`, the SWC values come from the ETC L2 Meteo data objects and the GPP values from the ETC L2 FluxNet data objects, all written into the **same output file**.
 
-**Sample output**:
-```
-TIMESTAMP,FI-Lom (m3/m3),FR-Hes (m3/m3),...
-2020-01-01 00:00:00,0.25,0.30,...
-2020-01-01 01:00:00,0.26,0.31,...
-```
+**Output**:
+- A single CSV with TIMESTAMP as the index and one column per station-variable time series
 
 **Output format**:
 - Index: TIMESTAMP (pandas DatetimeIndex, written as the first CSV column)
-- Columns: One column per station-variable pair
-  - Single variable: `"STATION_ID (unit)"` (e.g., `"FI-Lom (m3/m3)"`)
-  - Multiple variables: `"STATION_ID_VARIABLE (unit)"` (e.g., `"FI-Lom_SWC_1 (m3/m3)"`)
-  - With `--resample` and multiple `--agg`: `"STATION_ID_VARIABLE_AGG (unit)"` (e.g., `"FI-Lom_SWC_1_MEAN (m3/m3)"`)
-- Units: Inferred from ICOS data object metadata
-- Missing values: Empty cells where data is not available
+- Columns: `STATION_ID_VARIABLE (unit)` (e.g., `FI-Lom_SWC_1 (m3/m3)`, `FI-Lom_GPP_NT_CUT_REF (gC/m2/d)`)
+  - With `--resample` and multiple `--agg`: `STATION_ID_VARIABLE_AGG (unit)` (e.g., `FI-Lom_SWC_1_MEAN (m3/m3)`)
+- Units: Inferred from ICOS data object metadata; for variables that are converted (GPP*/NEE*/RECO* columns by default) the target unit is shown instead
+- Missing values: Empty cells where data is not available. Note that SWC and GPP come from different data objects, so their time spans may differ — the index is the union of timestamps.
+
+**Sample output**:
+```
+TIMESTAMP,FI-Lom_SWC_1 (m3/m3),FI-Lom_GPP_NT_CUT_REF (gC/m2/d),...
+2020-01-01 00:00:00,0.25,-10.7,...
+2020-01-01 01:00:00,0.26,-8.3,...
+```
+
+## Unit conversion (`units.py`)
+
+`download.py` uses [pint](https://pint.readthedocs.io/) to convert variable values to sensible target units before any resampling:
+
+| Variables | Default target unit |
+|-----------|---------------------|
+| `GPP_NT_CUT_REF`, `GPP_NT_VUT_REF`, `GPP_DT_CUT_REF`, `GPP_DT_VUT_REF` | `gC/m2/d` (grams of carbon per m² per day) |
+| `NEE_CUT_REF`, `NEE_VUT_REF`, `RECO_NT_CUT_REF`, `RECO_NT_VUT_REF` | `gC/m2/d` |
+| GPP, NEE, RE, NBP (legacy names) | `gC/m2/d` |
+
+- Other variables (e.g. SWC in `m3/m3`) keep the unit reported by ICOS.
+- Molar source units (e.g. `mol C/m2/s`, or `µmol m-2 s-1` as reported by the FluxNet product) are converted with the standard atomic weight of carbon (12.011 g/mol). `µmol m-2 s-1 -> gC/m2/d` uses a factor of ≈1.0378 (1e-6 mol × 12.011 g/mol × 86400 s/d).
+- A conversion is only applied when the source unit is known from the data object metadata and dimensionally compatible with the target; otherwise the variable is left as-is and a warning is printed.
+- Column headers always show the unit the values are expressed in (e.g. `FI-Lom_GPP_NT_CUT_REF (gC/m2/d)`).
+
+To use a different target unit, pass `--unit VAR:UNIT` (repeatable):
+
+```bash
+python download.py --input-csv stations_combined.csv --variables SWC_1,GPP_NT_CUT_REF \
+    --unit GPP_NT_CUT_REF:gC/m2/h --output gpp_sm_timeseries.csv
+```
+
+To keep the ICOS source units (e.g. FluxNet GPP in `µmol m-2 s-1`), disable automatic conversion:
+
+```bash
+python download.py --variables GPP_NT_CUT_REF --no-unit-conversion
+```
 
 ## Workflow
 
@@ -177,7 +204,7 @@ TIMESTAMP,FI-Lom (m3/m3),FR-Hes (m3/m3),...
    python -c "from icoscp_core.icos import auth; auth.init_config_file()"
    ```
 
-4. **Download data**:
+4. **Download both in a single run**:
    ```bash
    # Download SWC_1 from all stations:
    python download.py
@@ -197,6 +224,26 @@ TIMESTAMP,FI-Lom (m3/m3),FR-Hes (m3/m3),...
    # Daily mean and standard deviation:
    python download.py --variables SWC_1 --resample 1D --agg mean,std
    ```
+   Add `--resample 1D` (and optionally `--agg mean,std`) for daily aggregates.
+
+### Soil moisture only
+
+```bash
+python metadata.py --datatype etcL2Meteo
+python download.py --variables SWC
+```
+
+### Fluxes only
+
+```bash
+# GPP, NEE, RECO (FluxNet-format L2 product):
+python metadata.py --datatype etcL2Fluxnet
+python download.py --input-csv stations_fluxnet.csv --variables GPP_NT_CUT_REF,NEE_CUT_REF
+
+# NEE, CO2, H, H2O, LE (Fluxes product — no GPP):
+python metadata.py --datatype etcL2Fluxes
+python download.py --input-csv stations_flux.csv --variables NEE
+```
 
 ## Data Information
 
@@ -224,8 +271,8 @@ Soil moisture and GPP can be combined per station: all 83 fluxnet stations also 
 > (prefix matching). To get a single series, request the exact name, e.g. `GPP_NT_VUT_REF`.
 
 ### Data Format
-- The source data is in ETC L2 Meteo format (Level 2, Quality Controlled)
-- Time series data includes timestamps and measurements at regular intervals
+- The source data is in ETC L2 format (Level 2, Quality Controlled)
+- Time series are at the station's native reporting frequency
 - Missing values may occur depending on station operation
 
 ## Notes
@@ -235,6 +282,7 @@ Soil moisture and GPP can be combined per station: all 83 fluxnet stations also 
 - Some stations have measurements at multiple soil depths
 - Authentication is required only for data download, not for station discovery
 - The scripts use the official `icoscp_core` and `icoscp` Python libraries
+- Files left over from an older version of these scripts (e.g. `station_metadata.csv`, `stations_soil_moisture.csv`) are no longer produced and can be deleted
 
 ## Quick Authentication Test
 
@@ -265,7 +313,7 @@ Then run: `python test_auth.py`
 ### "Authentication error" when downloading
 
 **If using a token**:
-1. Make sure the token format is correct: `--cpauthtoken cpauthToken=YOUR_TOKEN_VALUE`
+1. Make sure the token format is correct: `--cpauthtoken cpauthToken=cpauthToken_TOKEN_VALUE`
 2. Ensure the `cpauthToken=` prefix is included
 3. Check that the token hasn't expired (tokens last ~27 hours)
 4. Verify you have accepted the ICOS Data Licence in your profile
@@ -277,8 +325,23 @@ Then run: `python test_auth.py`
 ### "No stations found"
 Run `metadata.py` first to create the required CSV files.
 
-### Specific soil layer not available
-Check `stations_soil_moisture.csv` to see which SWC levels each station has. Not all stations have all levels.
+Run `metadata.py` first to create the station CSVs, then pass the right one via `--input-csv`:
+- `stations_sm.csv` - soil moisture only
+- `stations_fluxnet.csv` - FluxNet carbon fluxes (GPP, NEE, RECO)
+- `stations_flux.csv` - Fluxes product (NEE, CO2, H, H2O, LE)
+- `stations_combined.csv` - all queried data types (written when multiple data types are queried)
+
+### "No stations found"
+
+Check the `--datatype` and `--variable-pattern` arguments of `metadata.py` — a too-restrictive variable filter (e.g. `--variable-pattern GPP` while querying `etcL2Meteo`) matches no stations.
+
+### "Found 0 stations with matching variables" when looking for GPP
+
+GPP is **not** part of the `etcL2Fluxes` product (that product contains NEE, CO2, H, H2O, LE, ...). GPP is in the **`etcL2Fluxnet`** product as `GPP_NT_CUT_REF` (and related `GPP_*_REF` columns). Query it with `--datatype etcL2Fluxnet`.
+
+### Specific soil layer or variable not available
+
+Check the corresponding CSV to see which variables each station has (`stations_sm.csv` for SWC levels, `stations_fluxnet.csv` for GPP/NEE/RECO, `stations_flux.csv` for NEE/CO2/H2O/...). Not all stations have all levels or variables. In a combined run, a missing combination simply shows up as empty cells in the output.
 
 ## References
 
