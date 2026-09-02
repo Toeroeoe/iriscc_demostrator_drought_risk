@@ -1,5 +1,26 @@
+# ---------------------------------------------------------------------------
+# ICOS observation downloader (download.py)
+#
+# These pins require Python >= 3.10. This machine only provides Python 3.9,
+# so the venv in this directory (evaluation/.venv) uses the fallback
+# versions listed at the bottom instead.
 icoscp==0.2.3
 icoscp-core==0.3.13
 pandas==3.0.5
 pint==0.25.3
 pytest==9.1.1
+
+# ---------------------------------------------------------------------------
+# CLM5 model extraction (clm5_download.py)
+netCDF4==1.7.2
+PyYAML==6.0.3
+
+# ---------------------------------------------------------------------------
+# Python 3.9 fallbacks (what is actually installed in evaluation/.venv)
+# icoscp==0.1.20          # last release supporting Python 3.9; its API is
+#                         # too old for download.py, which needs icoscp.dobj
+# pandas==2.2.3
+# Pint==0.24.4
+# pytest==8.3.5
+# numpy==1.26.4
+# cftime==1.6.4.post1     # installed automatically with netCDF4
