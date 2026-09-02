@@ -1,0 +1,14 @@
+clm5:
+  path: "/p/data1/jibg31/CLM5_EU3_DETECT/BGC_outputs/history/"
+  files: "CLM5-EUR0275-BGC_0001_JR.clm2.h0.*-01-01-00000.nc"
+  variables:
+      SM : H2OSOI
+      GPP: GPP
+  soil_layer_i: 0
+
+grid:
+    path: "/p/scratch/cjibg31/jibg3105/CESMDataRoot/InputData/share/domains/"
+    file: "domain.lnd.CLM5EU3_v4.nc"
+    variables:
+        lat: yc
+        lon: xc

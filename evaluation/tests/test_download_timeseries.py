@@ -13,7 +13,14 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import download as dsm  # noqa: E402
+try:
+    import download as dsm  # noqa: E402
+except ImportError:
+    # download.py needs the icoscp >= 0.2 API ('icoscp.dobj'), which is
+    # only available on Python >= 3.10. Skip the module on older Pythons.
+    dsm = None
+    pytestmark = pytest.mark.skip(
+        reason='requires icoscp >= 0.2 (Python >= 3.10)')
 
 
 TS = pd.date_range('2020-01-01', periods=8, freq='h')

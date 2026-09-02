@@ -46,6 +46,19 @@ def test_normalize_fluxnet_units():
     assert units.normalize_unit('umolC m**-2 s**-1') == 'umolC m**-2 s**-1'
 
 
+def test_normalize_cesm_caret_powers():
+    # CLM5/CESM output writes powers with a caret, e.g. 'gC/m^2/s'.
+    # Pint accepts '^' as a power operator; pin this so a future pint
+    # upgrade that drops the shorthand is caught.
+    assert units.normalize_unit('gC/m^2/s') == 'gC/m^2/s'
+    assert units.conversion_factor('gC/m^2/s', 'gC/m2/d') == pytest.approx(86400.0)
+
+
+def test_conversion_factor_clm5_soil_moisture_to_percent():
+    # CLM5 H2OSOI is reported in mm3/mm3; the ICOS SWC columns are in %.
+    assert units.conversion_factor('mm3/mm3', '%') == pytest.approx(100.0)
+
+
 # ---------------------------------------------------------------------------
 # base_name
 # ---------------------------------------------------------------------------
