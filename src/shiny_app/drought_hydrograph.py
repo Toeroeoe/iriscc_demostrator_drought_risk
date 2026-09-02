@@ -119,7 +119,13 @@ def _smooth_series(x, y, nout=1000):
 
     if len(x_valid) < 3:
         # Too few points for spline, return what we have
-        return np.linspace(x.min(), x.max(), nout) if len(x) > 0 else np.array([]), np.maximum(y_valid, 0)
+        # Ensure x and y have same length
+        if len(x_valid) == 0:
+            return np.array([]), np.array([])
+        x_out = np.linspace(x_valid.min(), x_valid.max(), nout)
+        # Interpolate y to match nout points
+        y_out = np.interp(x_out, x_valid, y_valid)
+        return x_out, np.maximum(y_out, 0)
 
     try:
         # Check for duplicate x values and aggregate if needed
@@ -272,10 +278,10 @@ def _create_total_inset(ax, dec_df, decade, palette, theme_config):
     FS_TITLE = theme_config.font_sizes['title']
     FS_HEADING = theme_config.font_sizes['heading']
 
-    # Count actual drought events (not just months)
-    # Q10-only events: below Q10 but NOT below Q50
-    q10_only = (dec_df['drought_10yr']) & (~dec_df['drought_50yr'])
-    count_q10 = _count_events(q10_only)
+    # Count actual drought events (runs of consecutive months below threshold).
+    # No band exclusion: the 10-yr count includes events that deepen into the
+    # 50-yr band, so a single episode is never split across the two bars.
+    count_q10 = _count_events(dec_df['drought_10yr'])
     count_q50 = _count_events(dec_df['drought_50yr'])
     counts = [count_q10, count_q50]
     y_pos = np.arange(2)
@@ -338,11 +344,13 @@ def _create_monthly_inset(ax, dec_df, decade, palette, theme_config):
     months_initial = ['J','F','M','A','M','J','J','A','S','O','N','D']
     x = np.arange(12)
     width = 0.25
+    # Drought months per calendar month (seasonal distribution). No band
+    # exclusion: months in the 50-yr band also count as 10-yr drought months.
     counts_q10, counts_q50 = [], []
     for m in range(1, 13):
         sub = dec_df[dec_df['month'] == m]
-        c10 = sum((sub['drought_10yr']) & (~sub['drought_50yr']))
-        c50 = sum(sub['drought_50yr'])
+        c10 = int(sum(sub['drought_10yr']))
+        c50 = int(sum(sub['drought_50yr']))
         counts_q10.append(c10)
         counts_q50.append(c50)
 
@@ -375,11 +383,11 @@ def _create_monthly_inset(ax, dec_df, decade, palette, theme_config):
         labelpad=10
     )
     ax.set_ylabel(
-        'event count', fontsize=FS_BASE, fontfamily=FONT_MONO, color=COL_TEXT,
+        'drought months', fontsize=FS_BASE, fontfamily=FONT_MONO, color=COL_TEXT,
         labelpad=10
     )
     ax.set_title(
-        f'Drought events by month',
+        f'Drought months by month of year',
         fontsize=FS_TITLE, fontfamily=FONT_HEADING, color=COL_TEXT, pad=10
     )
 
@@ -418,11 +426,24 @@ def create_drought_hydrograph(gauge_id, decade_year=None, persistence=1):
     if qobs is None or len(qobs) == 0:
         raise ValueError(f"No discharge data found for gauge {gauge_id}")
 
-    # Get dates from discharge_time
+    # Resample the daily record to monthly means so that the thresholds, the
+    # persistence filter and the event counts all operate on a monthly basis
+    # (matches the R reference and discharge_plot in app.py).
     dates = discharge_time
+    qobs_mo = pd.Series(qobs, index=dates).resample('ME').mean()
+    dates = qobs_mo.index
+    qobs = qobs_mo.to_numpy()
 
-    # Compute thresholds from full record
-    thresholds = _compute_monthly_thresholds(qobs, dates)
+    # Compute the monthly Q10/Q50 thresholds from the reference period only,
+    # so every selectable decade is judged against the same fixed historical
+    # baseline (1960-1999). Fall back to the full record if the reference
+    # window has no data.
+    REF_START, REF_END = 1960, 1999
+    ref_mask = (dates.year >= REF_START) & (dates.year <= REF_END)
+    if ref_mask.sum() > 0:
+        thresholds = _compute_monthly_thresholds(qobs[ref_mask], dates[ref_mask])
+    else:
+        thresholds = _compute_monthly_thresholds(qobs, dates)
 
     # Create flow dataframe
     flow = pd.DataFrame({
