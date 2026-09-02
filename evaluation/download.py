@@ -5,10 +5,14 @@ stations listed in a CSV file.
 
 This script:
 1. Reads station data from a CSV file (default: stations_soil_moisture.csv,
-   created by evaluation_icos.py)
+   created by metadata.py)
 2. Downloads the requested variables for every data object of each station
 3. Combines all data into a single CSV with one column per
    station-variable time series
+
+Note: the variables available in each data object depend on its data product.
+Flux variables (GPP, NEE, ...) are only in the ETC L2 Fluxnet / ETC L2 Fluxes
+products, not in ETC L2 Meteo. See metadata.py for the product list.
 
 Output Format:
 - TIMESTAMP as the index (pandas DatetimeIndex, written as first CSV column)
@@ -24,25 +28,29 @@ See: https://icos-carbon-portal.github.io/pylib/icoscp/authentication/
 
 Usage:
     # Download only the first soil layer (default):
-    python download_soil_moisture.py
+    python download.py
 
     # Download multiple variables (soil layers and/or fluxes such as GPP):
-    python download_soil_moisture.py --variables SWC_1,SWC_2,GPP
+    python download.py --variables SWC_1,SWC_2,GPP
 
     # Download all soil layers of every station ('SWC' matches SWC_1, SWC_2, ...):
-    python download_soil_moisture.py --variables SWC
+    python download.py --variables SWC
+
+    # Download GPP from the ETC L2 Fluxnet data objects (discover them first):
+    python metadata.py --datatype etcL2Fluxnet
+    python download.py --input-csv stations_fluxnet.csv --variables GPP_NT_VUT_REF
 
     # Resample to daily means:
-    python download_soil_moisture.py --variables SWC_1 --resample 1D
+    python download.py --variables SWC_1 --resample 1D
 
     # Daily mean and standard deviation:
-    python download_soil_moisture.py --variables SWC_1 --resample 1D --agg mean,std
+    python download.py --variables SWC_1 --resample 1D --agg mean,std
 
     # Limit the number of data objects processed:
-    python download_soil_moisture.py --limit 5
+    python download.py --limit 5
 
     # Specify input/output files:
-    python download_soil_moisture.py --input-csv stations_soil_moisture.csv --output soil_data.csv
+    python download.py --input-csv stations_soil_moisture.csv --output soil_data.csv
 """
 
 import os
@@ -78,8 +86,11 @@ def parse_args():
         '--variables',
         default='SWC_1',
         help="Comma-separated variable names to download (default: SWC_1). "
-             "A bare family prefix matches all numbered variants, "
-             "e.g. 'SWC' matches SWC_1, SWC_2, ..."
+             "A bare prefix matches all underscore variants, "
+             "e.g. 'SWC' matches SWC_1, SWC_2, ... and 'GPP' matches the "
+             "FluxNet-style flux names GPP_NT_VUT_REF, GPP_NT_CUT_REF, GPP_DT_*. "
+             "Note: GPP/NEE only exist in the ETC L2 Fluxnet/Fluxes data objects, "
+             "not in ETC L2 Meteo - discover them with metadata.py first."
     )
     parser.add_argument(
         '--resample',
@@ -124,14 +135,27 @@ def read_stations_from_csv(csv_path):
     return stations
 
 
+def label_matches_spec(label, spec):
+    """
+    True if a column label (possibly with a unit in square brackets,
+    e.g. 'SWC_1 [m3/m3]') equals `spec` or starts with `spec + '_' 
+    (so 'SWC' matches 'SWC_1', but 'SWC_1' does not match 'SWC_10').
+    """
+    m = UNIT_LABEL_RE.match(label)
+    base = m.group('name') if m else label
+    return base == spec or base.startswith(spec + '_')
+
+
 def match_variables(requested, labels):
     """
     Match requested variable names (or family prefixes) against the column
     labels available in a data object.
 
     'SWC_1' matches exactly 'SWC_1' (but not 'SWC_10'); a bare prefix like
-    'SWC' matches 'SWC_1', 'SWC_2', ... Labels that embed their unit in
-    square brackets (e.g. 'SWC_1 [m3/m3]') are matched by their bare name.
+    'SWC' matches 'SWC_1', 'SWC_2', ... and 'GPP' matches the FluxNet-style
+    names 'GPP_NT_VUT_REF', 'GPP_DT_CUT_REF', .... Labels that embed their
+    unit in square brackets (e.g. 'SWC_1 [m3/m3]') are matched by their
+    bare name.
 
     Args:
         requested: List of requested variable names/prefixes
@@ -142,12 +166,8 @@ def match_variables(requested, labels):
     """
     matched = []
     for label in labels:
-        m = UNIT_LABEL_RE.match(label)
-        base = m.group('name') if m else label
-        for spec in requested:
-            if base == spec or base.startswith(spec + '_'):
-                matched.append(label)
-                break
+        if any(label_matches_spec(label, spec) for spec in requested):
+            matched.append(label)
     return matched
 
 
@@ -529,7 +549,7 @@ def main():
         print("\nOption 1: Initialize credentials file (recommended for local use):")
         print('  python -c "from icoscp_core.icos import auth; auth.init_config_file()"')
         print("\nOption 2: Use a token from 'My Account' page:")
-        print("  python download_soil_moisture.py --cpauthtoken YOUR_TOKEN_HERE")
+        print("  python download.py --cpauthtoken YOUR_TOKEN_HERE")
         print("  (Make sure token includes 'cpauthToken=' prefix)")
         print()
 
@@ -545,6 +565,19 @@ def main():
     if not all_data.empty and args.resample:
         print(f"\nResampling to '{args.resample}' with agg={aggs}...")
         all_data = resample_timeseries(all_data, args.resample, aggs)
+
+    # Warn about requested variables that ended up with no data at all
+    have = set(all_data.columns.get_level_values(1)) if not all_data.empty else set()
+    missing = [s for s in requested if not any(label_matches_spec(l, s) for l in have)]
+    if missing:
+        print(f"\nWarning: no data found for requested variable(s): {', '.join(missing)}")
+        print(f"  The data objects listed in '{args.input_csv}' do not provide them.")
+        if any(s.upper().startswith(('GPP', 'NEE')) for s in missing):
+            print("  GPP/NEE are not part of the ETC L2 Meteo product; they are in the")
+            print("  ETC L2 Fluxnet product under FluxNet-style names (GPP_NT_VUT_REF,")
+            print("  GPP_NT_CUT_REF, NEE_VUT_REF, ...). Run:")
+            print("    python metadata.py --datatype etcL2Fluxnet")
+            print("    python download.py --input-csv stations_fluxnet.csv --variables GPP_NT_VUT_REF")
 
     # Write results to CSV
     write_timeseries_csv(all_data, args.output, variable_units)

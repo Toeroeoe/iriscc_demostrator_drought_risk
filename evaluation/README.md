@@ -1,10 +1,10 @@
-# ICOS Soil Moisture Data Download Scripts
+# ICOS Soil Moisture & Flux Data Download Scripts
 
-This directory contains scripts to discover and download ICOS surface soil moisture data from ecosystem (ES) stations with Level 2 data.
+This directory contains scripts to discover and download ICOS ecosystem (ES) station data at Level 2: surface soil moisture (SWC) and carbon fluxes (GPP, NEE, ...).
 
 ## Overview
 
-ICOS (Integrated Carbon Observation System) provides soil moisture measurements (SWC - Soil Water Content) at various depths as part of their ETC L2 Meteo data products. These scripts help you:
+ICOS (Integrated Carbon Observation System) provides soil moisture measurements (SWC - Soil Water Content) at various depths as part of their ETC L2 Meteo data product, and carbon fluxes (GPP, NEE, H, LE) in the ETC L2 Fluxnet / ETC L2 Fluxes data products. These scripts help you:
 
 1. **Discover** which stations have soil moisture data and their metadata
 2. **Download** the actual soil moisture time series data
@@ -54,7 +54,7 @@ Get a token from your "My Account" page at https://meta.icos-cp.eu/ and use it d
 3. Copy the full token value (it starts with `cpauthToken=`)
 4. Use it in the command:
 ```bash
-python download_soil_moisture.py --cpauthtoken cpauthToken=[the-actual-token-value]
+python download.py --cpauthtoken cpauthToken=[the-actual-token-value]
 ```
 
 **Important**: Make sure to include the `cpauthToken=` prefix. The token looks like a long encoded string (e.g., `cpauthToken=WzE2OTY2NzQ5OD...]`).
@@ -72,24 +72,21 @@ Full authentication documentation: https://icos-carbon-portal.github.io/pylib/ic
 
 ## Scripts
 
-### 1. evaluation_icos.py - Discover Stations with Soil Moisture Data
+### 1. metadata.py - Discover Stations and Their Data Objects
 
-This script queries the ICOS Carbon Portal metadata service to find all ecosystem stations that have Level 2 soil moisture data.
+This script queries the ICOS Carbon Portal metadata service to find all ecosystem stations that have the requested Level 2 data product. By default it discovers **etcL2Meteo** (soil moisture) and **etcL2Fluxnet** (GPP/NEE) stations.
 
 **Usage:**
 ```bash
-python evaluation_icos.py
+python metadata.py                      # etcL2Meteo + etcL2Fluxnet
+python metadata.py --datatype etcL2Meteo,etcL2Fluxes,etcL2Fluxnet
+python metadata.py --variable-pattern GPP,NEE   # only stations with these variables
 ```
 
-**Output:**
-- `station_metadata.csv` - Metadata for all stations with soil moisture data
-- `stations_soil_moisture.csv` - List of stations with data object URIs for downloading
-
-**What it does:**
-- Finds ecosystem (ES) stations with ETC L2 Meteo data
-- Identifies which stations have soil moisture (SWC) variables
-- Extracts station metadata: name, coordinates, elevation, country
-- Lists available SWC levels per station (SWC_1, SWC_2, etc.)
+**Output (one CSV per data type, with station metadata + data object URIs):**
+- `stations_soil_moisture.csv` (etcL2Meteo)
+- `stations_fluxnet.csv` (etcL2Fluxnet - the product that contains GPP)
+- `stations_flux.csv` (etcL2Fluxes - NEE/H/LE/CO2, no GPP)
 
 **Sample output (station_metadata.csv):**
 ```csv
@@ -99,38 +96,42 @@ http://meta.icos-cp.eu/resources/stations/ES_FR-Hes,FR-Hes,Hesse (FR-Hes),48.674
 ...
 ```
 
-### 2. download_soil_moisture.py - Download ICOS Time Series Data
+### 2. download.py - Download ICOS Time Series Data
 
-This script downloads time series data (soil moisture, GPP, NEE, etc.) from the stations discovered by `evaluation_icos.py`.
+This script downloads time series data (soil moisture, GPP, NEE, etc.) from the stations discovered by `metadata.py`.
 
 **Usage**:
 ```bash
-# Download only SWC_1 (default):
-python download_soil_moisture.py
+# Download only SWC_1 (default, from stations_soil_moisture.csv):
+python download.py
 
 # Download multiple variables (soil layers and/or fluxes such as GPP):
-python download_soil_moisture.py --variables SWC_1,SWC_2,GPP
+python download.py --variables SWC_1,SWC_2,GPP
 
 # Download all soil layers ('SWC' matches SWC_1, SWC_2, ...):
-python download_soil_moisture.py --variables SWC
+python download.py --variables SWC
+
+# Download GPP from the ETC L2 Fluxnet data objects (discover them first):
+python metadata.py --datatype etcL2Fluxnet
+python download.py --input-csv stations_fluxnet.csv --variables GPP_NT_VUT_REF
 
 # Resample to daily means:
-python download_soil_moisture.py --variables SWC_1 --resample 1D
+python download.py --variables SWC_1 --resample 1D
 
 # Daily mean and standard deviation:
-python download_soil_moisture.py --variables SWC_1 --resample 1D --agg mean,std
+python download.py --variables SWC_1 --resample 1D --agg mean,std
 
 # With authentication token:
-python download_soil_moisture.py --cpauthtoken cpauthToken=YOUR_TOKEN_HERE --variables SWC_1
+python download.py --cpauthtoken cpauthToken=YOUR_TOKEN_HERE --variables SWC_1
 
 # Limit the number of data objects processed (useful for testing):
-python download_soil_moisture.py --limit 5
+python download.py --limit 5
 
 # Specify input/output files:
-python download_soil_moisture.py --input-csv stations_soil_moisture.csv --output soil_data.csv
+python download.py --input-csv stations_soil_moisture.csv --output soil_data.csv
 
 # Show help:
-python download_soil_moisture.py --help
+python download.py --help
 ```
 
 **Options**:
@@ -163,12 +164,13 @@ TIMESTAMP,FI-Lom (m3/m3),FR-Hes (m3/m3),...
 
 ## Workflow
 
-1. **Discover stations**:
+1. **Discover stations** (no authentication needed):
    ```bash
-   python evaluation_icos.py
+   python metadata.py
    ```
+   This creates `stations_soil_moisture.csv` and `stations_fluxnet.csv` (see the product notes in *Data Information*).
 
-2. **Review the output CSV files** to see which stations have soil moisture data and which levels are available.
+2. **Review the output CSV files** to see which stations have which variables and their data object URIs.
 
 3. **Authenticate** (if you want to download data):
    ```bash
@@ -178,22 +180,22 @@ TIMESTAMP,FI-Lom (m3/m3),FR-Hes (m3/m3),...
 4. **Download data**:
    ```bash
    # Download SWC_1 from all stations:
-   python download_soil_moisture.py
-   
+   python download.py
+
    # Download SWC_1, SWC_2, SWC_3 from all stations:
-   python download_soil_moisture.py --variables SWC_1,SWC_2,SWC_3
-   
+   python download.py --variables SWC_1,SWC_2,SWC_3
+
    # Download all soil layers using family prefix:
-   python download_soil_moisture.py --variables SWC
-   
-   # Download multiple variables including GPP:
-   python download_soil_moisture.py --variables SWC_1,GPP
-   
+   python download.py --variables SWC
+
+   # Download GPP from the ETC L2 Fluxnet data objects:
+   python download.py --input-csv stations_fluxnet.csv --variables GPP_NT_VUT_REF
+
    # Resample to daily means:
-   python download_soil_moisture.py --variables SWC_1 --resample 1D
-   
+   python download.py --variables SWC_1 --resample 1D
+
    # Daily mean and standard deviation:
-   python download_soil_moisture.py --variables SWC_1 --resample 1D --agg mean,std
+   python download.py --variables SWC_1 --resample 1D --agg mean,std
    ```
 
 ## Data Information
@@ -202,6 +204,24 @@ TIMESTAMP,FI-Lom (m3/m3),FR-Hes (m3/m3),...
 - **SWC_1, SWC_2, ...** - Soil Water Content at different depths
 - The number of available levels varies by station (typically 1-7 levels)
 - Values are typically in m³/m³ (volumetric water content)
+- Product: **ETC L2 Meteo** (`etcL2Meteo`) - this product contains **no carbon fluxes**
+
+### Flux Variables (GPP / NEE)
+
+GPP is **not** in the ETC L2 Meteo product. The carbon flux products use
+FluxNet-style variable names:
+
+- **ETC L2 Fluxnet** (`etcL2Fluxnet`, 83 stations) - the product that contains GPP:
+  - `GPP_NT_VUT_REF` - GPP from the night-time leg, VUT reference (standard choice; all 83 stations)
+  - `GPP_NT_CUT_REF` - GPP, night-time leg, CUT reference (80 stations)
+  - `GPP_DT_VUT_REF` / `GPP_DT_CUT_REF` - daytime GPP variants (80 / 77 stations)
+  - `NEE_VUT_REF` / `NEE_CUT_REF` (+ `_QC` flag columns) - net ecosystem exchange
+- **ETC L2 Fluxes** (`etcL2Fluxes`, 93 stations) - `NEE`, `H`, `LE`, `CO2` and `*_UNCLEANED` variants, but **no GPP**
+
+Soil moisture and GPP can be combined per station: all 83 fluxnet stations also have ETC L2 Meteo data.
+
+> **Gotcha:** requesting bare `GPP` matches all `GPP_*` variants in a data object
+> (prefix matching). To get a single series, request the exact name, e.g. `GPP_NT_VUT_REF`.
 
 ### Data Format
 - The source data is in ETC L2 Meteo format (Level 2, Quality Controlled)
@@ -210,10 +230,10 @@ TIMESTAMP,FI-Lom (m3/m3),FR-Hes (m3/m3),...
 
 ## Notes
 
-- **78 ecosystem stations** currently have soil moisture data available
+- **93 ecosystem stations** currently have ETC L2 Meteo data, **83** have ETC L2 Fluxnet data (GPP)
 - Data is distributed across European countries (FI, SE, DE, FR, IT, etc.)
 - Some stations have measurements at multiple soil depths
-**Note**: Authentication is required only for data download, not for station discovery
+- Authentication is required only for data download, not for station discovery
 - The scripts use the official `icoscp_core` and `icoscp` Python libraries
 
 ## Quick Authentication Test
@@ -255,7 +275,7 @@ Then run: `python test_auth.py`
 2. Re-initialize with: `python -c "from icoscp_core.icos import auth; auth.init_config_file()"`
 
 ### "No stations found"
-Run `evaluation_icos.py` first to create the required CSV files.
+Run `metadata.py` first to create the required CSV files.
 
 ### Specific soil layer not available
 Check `stations_soil_moisture.csv` to see which SWC levels each station has. Not all stations have all levels.

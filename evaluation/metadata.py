@@ -1,25 +1,35 @@
 #!/usr/bin/env python3
 """
-Discover ICOS stations and their available variables from specified data types.
-Creates two CSV files:
-1. stations_list.csv - List of stations with the requested variables
-2. station_metadata.csv - Metadata including coordinates for all discovered stations
+Discover ICOS stations and their available variables from specified data products.
+Creates one CSV file per data type (default: stations_soil_moisture.csv for
+etcL2Meteo and stations_fluxnet.csv for etcL2Fluxnet), each with station
+metadata (name, coordinates, elevation, country) and the station's data
+object URIs ready for use with download.py.
+
+Flux data products and their carbon flux content:
+- etcL2Meteo   (ETC L2 Meteo):     SWC_1..n (soil moisture), TA, RH, ...
+- etcL2Fluxnet (ETC L2 Fluxnet):   GPP_NT_VUT_REF, GPP_NT_CUT_REF, GPP_DT_*,
+                                   NEE_VUT_REF, NEE_CUT_REF, ... (GPP lives here)
+- etcL2Fluxes  (ETC L2 Fluxes):    NEE, H, LE, CO2 (no GPP)
 
 Note: This script uses icoscp_core for metadata access. Data downloading requires authentication
 with ICOS Carbon Portal (see documentation at https://icos-carbon-portal.github.io/pylib/icoscp/authentication/)
 
 Usage:
-    # Default: discover stations with ETC L2 Meteo (soil moisture) AND ETC L2 Flux (GPP/NEE):
+    # Default: discover stations with ETC L2 Meteo (soil moisture) AND ETC L2 Fluxnet (GPP/NEE):
     python metadata.py
     
     # Only ETC L2 Meteo (soil moisture):
     python metadata.py --datatype etcL2Meteo
     
-    # Only ETC L2 Flux (fluxes):
-    python metadata.py --datatype etcL2Flux
+    # Only ETC L2 Fluxnet (GPP/NEE, FluxNet-style names):
+    python metadata.py --datatype etcL2Fluxnet
+    
+    # Only ETC L2 Fluxes (NEE/H/LE/CO2; no GPP):
+    python metadata.py --datatype etcL2Fluxes
     
     # Multiple data types:
-    python metadata.py --datatype etcL2Meteo,etcL2Flux
+    python metadata.py --datatype etcL2Meteo,etcL2Fluxnet
     
     # Filter variables by pattern (e.g., only SWC variables):
     python metadata.py --variable-pattern SWC
@@ -38,12 +48,16 @@ import argparse
 from datetime import datetime
 from icoscp_core.icos import meta
 
-# Data type URIs
+# Data type URIs.
+# NOTE: an unknown data type URI silently returns zero data objects, so
+# verify URIs against meta.list_datatypes() if a product yields nothing.
+# Flux coverage differs per product:
+#   etcL2Fluxes  -> NEE, H, LE, CO2 (NO GPP)
+#   etcL2Fluxnet -> GPP_NT_VUT_REF, GPP_NT_CUT_REF, GPP_DT_*, NEE_VUT_REF, ...
 DATA_TYPES = {
     'etcL2Meteo': 'http://meta.icos-cp.eu/resources/cpmeta/etcL2Meteo',
-    'etcL2Flux': 'http://meta.icos-cp.eu/resources/cpmeta/etcL2Flux',
-    'rts_gpp': 'http://meta.icos-cp.eu/resources/cpmeta/rtsGpp',
-    'rts_nee': 'http://meta.icos-cp.eu/resources/cpmeta/rtsNee',
+    'etcL2Fluxes': 'http://meta.icos-cp.eu/resources/cpmeta/etcL2Fluxes',
+    'etcL2Fluxnet': 'http://meta.icos-cp.eu/resources/cpmeta/etcL2Fluxnet',
 }
 
 
@@ -54,9 +68,9 @@ def parse_args():
     )
     parser.add_argument(
         '--datatype',
-        default='etcL2Meteo,etcL2Flux',
-        help='Comma-separated list of data types to query (default: etcL2Meteo,etcL2Flux). '
-             'Options: etcL2Meteo, etcL2Flux, rts_gpp, rts_nee'
+        default='etcL2Meteo,etcL2Fluxnet',
+        help='Comma-separated list of data types to query (default: etcL2Meteo,etcL2Fluxnet). '
+             'Options: etcL2Meteo, etcL2Fluxes, etcL2Fluxnet'
     )
     parser.add_argument(
         '--variable-pattern',
@@ -119,6 +133,9 @@ def find_stations_with_variables(datatypes, var_patterns):
         try:
             objs = meta.list_data_objects(datatype=uri)
             print(f"Found {len(objs)} {dt} data objects")
+            if not objs:
+                print(f"  Warning: data type '{dt}' returned no data objects. The URI may be "
+                      "invalid - check available data types with meta.list_datatypes().")
             all_data_objects.extend(objs)
         except Exception as e:
             print(f"  Error fetching {dt}: {e}")
@@ -150,31 +167,27 @@ def find_stations_with_variables(datatypes, var_patterns):
     # Check each station for variables
     result = []
     for station_id, data in station_data.items():
+        col_labels = []
         try:
-            # Check first data object for variable info (they should all have similar structure)
-            obj = data['objects'][0]
-            detailed = meta.get_dobj_meta(obj.uri)
-            specific_info = getattr(detailed, 'specific_info', None) or getattr(detailed, 'specificInfo', None)
-            
-            if specific_info and hasattr(specific_info, 'columns') and specific_info.columns:
-                col_labels = []
-                for col in specific_info.columns:
-                    if hasattr(col, 'label'):
-                        col_labels.append(col.label)
-                    elif hasattr(col, 'name'):
-                        col_labels.append(col.name)
-                    else:
-                        col_labels.append(str(col))
-                
-                # Filter by variable patterns if specified
-                if var_patterns:
-                    col_labels = match_variable_patterns(var_patterns, col_labels)
-                
-                if col_labels:
-                    data['variables'] = set(col_labels)
-                    result.append((station_id, data['uri'], list(data['variables']), data['objects']))
+            # Union the column labels of ALL data objects of the station:
+            # objects can differ (e.g. a variable only present in some years)
+            for obj in data['objects']:
+                detailed = meta.get_dobj_meta(obj.uri)
+                specific_info = getattr(detailed, 'specific_info', None) or getattr(detailed, 'specificInfo', None)
+                if specific_info and hasattr(specific_info, 'columns') and specific_info.columns:
+                    for col in specific_info.columns:
+                        label = getattr(col, 'label', None) or getattr(col, 'name', None) or str(col)
+                        if label and label not in col_labels:
+                            col_labels.append(label)
         except Exception as e:
             print(f"  Warning: Could not process station {station_id}: {e}")
+
+        if col_labels:
+            # Filter by variable patterns if specified
+            matched = match_variable_patterns(var_patterns, col_labels) if var_patterns else col_labels
+            if matched:
+                data['variables'] = set(matched)
+                result.append((station_id, data['uri'], list(data['variables']), data['objects']))
     
     print(f"Found {len(result)} stations with matching variables")
     return result
@@ -348,14 +361,14 @@ def main():
         
         # Determine output filename based on data type
         if dt == 'etcL2Meteo':
-            output_file = 'stations_sm.csv'
+            output_file = 'stations_soil_moisture.csv'
             label = 'soil_moisture_variables'
-        elif dt == 'etcL2Flux':
+        elif dt == 'etcL2Fluxes':
             output_file = 'stations_flux.csv'
             label = 'flux_variables'
-        elif dt == 'rts_gpp':
-            output_file = 'stations_gpp.csv'
-            label = 'gpp_variables'
+        elif dt == 'etcL2Fluxnet':
+            output_file = 'stations_fluxnet.csv'
+            label = 'fluxnet_variables'
         else:
             output_file = f'stations_{dt}.csv'
             label = 'variables'
