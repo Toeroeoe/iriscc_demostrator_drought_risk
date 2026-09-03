@@ -150,6 +150,11 @@ def write_decade_file(out_path: Path, member: np.ndarray, n_hit: np.ndarray,
             "end_date": str(ev["end"].date()),
             "duration_days": int(ev["duration"]),
             "integrated_area_km2_days": float(ev["integrated_area"]),
+            "maximum_area_km2": float(ev["maximum_area"]),
+            "decade": when.year // 10 * 10,
+            "drought_var": drought_var,
+            "t_agg": t_agg,
+            "project": project,
             "selection": "largest integrated_area among events whose majority of "
                          "duration lies in this decade; the full event (incl. the "
                          "part in the adjacent decade) is written here",
