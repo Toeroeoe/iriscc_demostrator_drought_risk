@@ -34,6 +34,9 @@ from shared import (
     eval_map_html,
     EVAL_VARIABLES,
     get_eval_series,
+    LARGEST_EVENT_lat,
+    LARGEST_EVENT_lon,
+    LARGEST_EVENT_DATA,
 )
 from shiny import App, render, ui
 from shiny.types import ImgData
@@ -235,6 +238,20 @@ SMI_STATISTICS = {
             "at or below a threshold; longer spells indicate more persistent drought"
         ),
     },
+    "largest_event": {
+        "label": "Largest drought event",
+        "cmap": "YlOrRd",
+        "vmin": 0.0,
+        "vmax": 200.0,
+        "extend": "max",
+        "scale": 1.0,
+        "cbar_label": "Duration (days)",
+        "meaning": (
+            "The single largest drought event in the decade, showing both the spatial extent "
+            "of the affected area and the duration at each pixel. This represents the event "
+            "with the largest integrated area over time."
+        ),
+    },
 }
 
 def _blank_ocean(data, mean_map, decade_year):
@@ -302,7 +319,9 @@ page_droughts = ui.div(
                 "dec",
                 "Decade",
                 min=date(1960, 1, 2),
-                max=date(2010, 1, 10),
+                # Max is the exact position of the 2020 tick (min + 6 × 3660 days),
+                # so every decade tick 1960–2020 is reachable.
+                max=date(2020, 2, 16),
                 value=date(1960, 1, 2),
                 step=timedelta(days=366 * 10),
                 time_format="%Y",
@@ -1457,7 +1476,7 @@ def server(input, output, session) -> None:
         stat_key = input.statistic()
 
         # Statistics that don't use thresholds
-        if stat_key in ["mean", "min"]:
+        if stat_key in ["mean", "min", "largest_event"]:
             return None
 
         # Show threshold based on active tab (for dfreq and maxspell)
@@ -1524,17 +1543,31 @@ def server(input, output, session) -> None:
             )
         elif active_tab in ("Meteorological", "Agricultural"):
             # Show statistic dropdown for Meteorological and Agricultural tabs
+            # Agricultural tab has an additional "largest_event" option
+            if active_tab == "Meteorological":
+                stat_choices = {
+                    "dfreq": "Drought frequency",
+                    "maxspell": "Longest dry spell",
+                    "min": "Peak severity",
+                    "mean": "Mean index",
+                }
+                stat_selected = "dfreq"
+            else:  # Agricultural
+                stat_choices = {
+                    "dfreq": "Drought frequency",
+                    "maxspell": "Longest dry spell",
+                    "min": "Peak severity",
+                    "mean": "Mean index",
+                    "largest_event": "Largest drought event",
+                }
+                stat_selected = "dfreq"
+            
             return ui.div(
                 ui.input_select(
                     "statistic",
                     "Statistic",
-                    choices={
-                        "dfreq": "Drought frequency",
-                        "maxspell": "Longest dry spell",
-                        "min": "Peak severity",
-                        "mean": "Mean index",
-                    },
-                    selected="dfreq",
+                    choices=stat_choices,
+                    selected=stat_selected,
                 ),
             )
         else:
@@ -1595,9 +1628,13 @@ def server(input, output, session) -> None:
                 f'The "{stat["label"]}" statistic has not been computed yet.'
             )
 
-        # Fall back to the earliest available decade if this one is missing
+        # Show an explicit message for decades without data (e.g. the 2020s,
+        # which SPI does not cover) instead of silently substituting another.
         if decade_year not in stat_data:
-            decade_year = min(stat_data.keys())
+            return _message_fig(
+                f"SPI data for the {decade_year}–{decade_year + 9} decade is not available. "
+                f"Available decades: {', '.join(str(y) for y in sorted(stat_data.keys()))}."
+            )
 
         spi_data = stat_data[decade_year] * stat["scale"]
         spi_data = _blank_ocean(spi_data, SPI_STAT_DATA.get(DEFAULT_SPI_AGG, {}).get(spi_thresh, {}).get("mean"), decade_year)
@@ -1712,41 +1749,48 @@ def server(input, output, session) -> None:
                 else min(stat_data.keys())
             )
 
-            # Build the meaning text with the actual threshold value for dfreq and maxspell
-            if stat_key in ["dfreq", "maxspell"]:
-                base_meaning = stat['meaning'].replace("a threshold", f"{spi_thresh}")
-                # Replace the parenthetical severity description based on threshold
-                if spi_thresh in SPI_THRESHOLD_LABELS:
-                    base_meaning = re.sub(
-                        r'\(.*?or worse\)',
-                        f"({SPI_THRESHOLD_LABELS[spi_thresh]})",
-                        base_meaning
-                    )
+            # Check decade availability before building caption
+            if decade_year not in stat_data and stat_data:
+                text = (
+                    f"SPI data for the {decade_year}–{decade_year + 9} decade is not available. "
+                    f"Available decades: {', '.join(str(y) for y in sorted(stat_data.keys()))}."
+                )
             else:
-                base_meaning = stat['meaning']
+                # Build the meaning text with the actual threshold value for dfreq and maxspell
+                if stat_key in ["dfreq", "maxspell"]:
+                    base_meaning = stat['meaning'].replace("a threshold", f"{spi_thresh}")
+                    # Replace the parenthetical severity description based on threshold
+                    if spi_thresh in SPI_THRESHOLD_LABELS:
+                        base_meaning = re.sub(
+                            r'\(.*?or worse\)',
+                            f"({SPI_THRESHOLD_LABELS[spi_thresh]})",
+                            base_meaning
+                        )
+                else:
+                    base_meaning = stat['meaning']
 
-            # Enhanced caption with reorganized structure and detailed explanations
-            text = (
-                f"<strong>{stat['label'].upper()}</strong> of meteorological drought "
-                f"({decade_year}–{decade_year + 9}).<br><br>"
-                f"<strong>Drought index:</strong> The Standardized Precipitation Index (SPI) is calculated "
-                f"locally for each 3 km pixel by fitting a gamma distribution to the precipitation "
-                f"accumulation over the specified aggregation period and transforming it to a standard "
-                f"normal distribution (mean=0, standard deviation=1). This local approach ensures that "
-                f"statistical references and threshold fits are specific to each pixel's climate. Aggregation "
-                f"periods such as 92 days represent the timescale over which precipitation is accumulated "
-                f"before calculating the SPI, with longer aggregations capturing more persistent drought "
-                f"conditions. Negative SPI values indicate below-average precipitation, with more negative "
-                f"values representing increasingly severe drought conditions.<br><br>"
-                f"<strong>What the drought frequency statistic shows:</strong> {base_meaning}.<br><br>"
-                f"<strong>Threshold:</strong> SPI ≤ {spi_thresh:.1f}<br><br>"
-                f"<strong>Reference period:</strong> 1961–1990. This period serves as the climatological "
-                f"baseline for the gamma distribution fitting. The SPI values are standardized relative to "
-                f"this reference period, allowing consistent comparison of drought severity across time and space.<br><br>"
-                f"<strong>Data source:</strong> ERA5 reanalysis "
-                f"(<a href='#hersbach2020' class='citation-link'>Hersbach et al., 2020</a>) downscaled to 3 km "
-                f"resolution using bilinear interpolation, within the EURO-CORDEX domain."
-            )
+                # Enhanced caption with reorganized structure and detailed explanations
+                text = (
+                    f"<strong>{stat['label'].upper()}</strong> of meteorological drought "
+                    f"({decade_year}–{decade_year + 9}).<br><br>"
+                    f"<strong>Drought index:</strong> The Standardized Precipitation Index (SPI) is calculated "
+                    f"locally for each 3 km pixel by fitting a gamma distribution to the precipitation "
+                    f"accumulation over the specified aggregation period and transforming it to a standard "
+                    f"normal distribution (mean=0, standard deviation=1). This local approach ensures that "
+                    f"statistical references and threshold fits are specific to each pixel's climate. Aggregation "
+                    f"periods such as 92 days represent the timescale over which precipitation is accumulated "
+                    f"before calculating the SPI, with longer aggregations capturing more persistent drought "
+                    f"conditions. Negative SPI values indicate below-average precipitation, with more negative "
+                    f"values representing increasingly severe drought conditions.<br><br>"
+                    f"<strong>What this statistic shows:</strong> {base_meaning}.<br><br>"
+                    f"<strong>Threshold:</strong> SPI ≤ {spi_thresh:.1f}<br><br>"
+                    f"<strong>Reference period:</strong> 1961–1990. This period serves as the climatological "
+                    f"baseline for the gamma distribution fitting. The SPI values are standardized relative to "
+                    f"this reference period, allowing consistent comparison of drought severity across time and space.<br><br>"
+                    f"<strong>Data source:</strong> ERA5 reanalysis "
+                    f"(<a href='#hersbach2020' class='citation-link'>Hersbach et al., 2020</a>) downscaled to 3 km "
+                    f"resolution using bilinear interpolation, within the EURO-CORDEX domain."
+                )
 
         return ui.HTML(
             f"<div style='text-align: left; color: #fff; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}<style>.citation-link {{ color: var(--bs-success); text-decoration: none; }} .citation-link:hover {{ text-decoration: underline; }}</style></div>"
@@ -1762,7 +1806,68 @@ def server(input, output, session) -> None:
         stat_key = input.statistic()
         stat = SMI_STATISTICS.get(stat_key, SMI_STATISTICS["mean"])
         decade_year = input.dec().year
+        
+        # Handle largest_event separately
+        if stat_key == "largest_event":
+            if not LARGEST_EVENT_DATA or decade_year not in LARGEST_EVENT_DATA:
+                available_years = list(LARGEST_EVENT_DATA.keys()) if LARGEST_EVENT_DATA else []
+                if available_years:
+                    text = (
+                        f"Largest drought event data is not available for {decade_year}. "
+                        f"Available decades: {', '.join(str(y) for y in sorted(available_years))}."
+                    )
+                else:
+                    text = "Largest drought event data is not available."
+            else:
+                event_data = LARGEST_EVENT_DATA[decade_year]
+                metadata = event_data["metadata"]
+                
+                # Format metadata for display
+                start_date = metadata.get("start_date", "Unknown")
+                end_date = metadata.get("end_date", "Unknown")
+                duration_days = metadata.get("duration_days", "Unknown")
+                max_area = metadata.get("maximum_area_km2", "Unknown")
+                integrated_area = metadata.get("integrated_area_km2_days", "Unknown")
+                
+                # Format large numbers with commas
+                if isinstance(duration_days, (int, float)) and not np.isnan(duration_days):
+                    duration_days = f"{int(duration_days):,}"
+                if isinstance(max_area, (int, float)) and not np.isnan(max_area):
+                    max_area = f"{int(max_area):,} km²"
+                if isinstance(integrated_area, (int, float)) and not np.isnan(integrated_area):
+                    integrated_area = f"{int(integrated_area):,} km²·days"
+                
+                text = (
+                    f"<strong>LARGEST DROUGHT EVENT</strong> of the decade {decade_year}–{decade_year + 9}.<br><br>"
+                    f"<strong>Event description:</strong> This shows the single largest drought event identified "
+                    f"during the decade, based on the largest integrated area over time. The event selection "
+                    f"method identifies the event whose majority of duration lies within this decade, but displays "
+                    f"the full event extent (including parts in adjacent decades).<br><br>"
+                    f"<strong>Event timing:</strong> {start_date} to {end_date} ({duration_days} days total duration)<br><br>"
+                    f"<strong>Spatial extent:</strong> Maximum area affected at any time: {max_area}<br>"
+                    f"<strong>Integrated impact:</strong> {integrated_area} (area × duration, combining spatial "
+                    f"extent and temporal persistence)<br><br>"
+                    f"<strong>Left panel:</strong> Binary mask showing all pixels that were part of this drought "
+                    f"event (red indicates affected areas, gray indicates no data/ocean).<br><br>"
+                    f"<strong>Right panel:</strong> Duration at each pixel, showing how many days each location "
+                    f"remained in drought conditions during this event. Longer durations (darker red) indicate "
+                    f"more persistent drought at those locations.<br><br>"
+                    f"<strong>Drought index:</strong> The event was identified using the SXI_SM_0 index (soil "
+                    f"moisture-based drought index with 92-day aggregation period). This index combines soil "
+                    f"moisture percentiles with duration and spatial extent to identify significant drought events.<br><br>"
+                    f"<strong>Data source:</strong> CLM5 (Community Land Model version 5) simulations at 3km "
+                    f"resolution (<a href='#lawrence2019' class='citation-link'>Lawrence et al., 2019</a>; "
+                    f"<a href='#poppe2025' class='citation-link'>Poppe Terán et al., 2025</a>), within the "
+                    f"EURO-CORDEX domain. Event detection follows the algorithm described in the DETECT project "
+                    f"methodology for identifying and characterizing drought events based on their spatial extent "
+                    f"and duration."
+                )
+            
+            return ui.HTML(
+                f"<div style='text-align: left; color: #fff; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}<style>.citation-link {{ color: var(--bs-success); text-decoration: none; }} .citation-link:hover {{ text-decoration: underline; }}</style></div>"
+            )
 
+        # Handle other SMI statistics (normal path)
         # Get the SMI threshold - handle case where slider doesn't exist (for 'mean' and 'min' stats)
         selected_thresh = None
         try:
@@ -1799,44 +1904,132 @@ def server(input, output, session) -> None:
                 "SMI threshold."
             )
         else:
-            # Find shown year
-            if decade_year in clm5_stat:
-                shown_year = decade_year
-            elif clm5_stat:
-                shown_year = min(clm5_stat.keys())
+            # Check decade availability before computing shown_year
+            if decade_year not in clm5_stat:
+                text = (
+                    f"SMI data for the {decade_year}–{decade_year + 9} decade is not available. "
+                    f"Available decades: {', '.join(str(y) for y in sorted(clm5_stat.keys()))}."
+                )
             else:
                 shown_year = decade_year
 
-            # Enhanced caption with reorganized structure and detailed explanations
-            text = (
-                f"<strong>{stat['label'].upper()}</strong> of agricultural drought "
-                f"({decade_year}–{decade_year + 9}).<br><br>"
-                f"<strong>Drought index:</strong> The Soil Moisture Index (SMI) is a normalized indicator "
-                f"of soil moisture conditions, calculated locally for each pixel by comparing the simulated "
-                f"soil moisture to the climatological distribution over the reference period. This local "
-                f"approach ensures that statistical references and threshold fits are specific to each "
-                f"pixel's climate and soil characteristics. SMI values range from 0 (extremely dry) to 1 "
-                f"(extremely wet), with lower values indicating drier conditions and increased agricultural "
-                f"drought risk.<br><br>"
-                f"<strong>What this statistic shows:</strong> {base_meaning}.<br><br>"
-                f"<strong>Threshold:</strong> SMI ≤ {selected_thresh:.1f}<br><br>"
-                f"<strong>Reference period:</strong> 1960–1999. This period serves as the climatological "
-                f"baseline for normalizing soil moisture values. The SMI is standardized relative to this "
-                f"reference period, allowing consistent comparison of drought severity across time and space.<br><br>"
-                f"<strong>Data sources:</strong> CLM5 (Community Land Model version 5) land surface model "
-                f"(<a href='#lawrence2019' class='citation-link'>Lawrence et al., 2019</a>; "
-                f"<a href='#poppe2025' class='citation-link'>Poppe Terán et al., 2025</a>) and mHM (mesoscale Hydrological Model) "
-                f"hydrological model (<a href='#thober2019' class='citation-link'>Thober et al., 2019</a>) simulations at 3km resolution, integrated between "
-                f"both models. Atmospheric forcing: ERA5 reanalysis "
-                f"(<a href='#hersbach2020' class='citation-link'>Hersbach et al., 2020</a>), adjustable "
-                f"through the sidebar. Soil moisture drought analysis follows "
-                f"(<a href='#samaniego2018' class='citation-link'>Samaniego et al., 2018</a>) "
-                f"within the EURO-CORDEX domain."
-            )
+                # Enhanced caption with reorganized structure and detailed explanations
+                text = (
+                    f"<strong>{stat['label'].upper()}</strong> of agricultural drought "
+                    f"({decade_year}–{decade_year + 9}).<br><br>"
+                    f"<strong>Drought index:</strong> The Soil Moisture Index (SMI) is a normalized indicator "
+                    f"of soil moisture conditions, calculated locally for each pixel by comparing the simulated "
+                    f"soil moisture to the climatological distribution over the reference period. This local "
+                    f"approach ensures that statistical references and threshold fits are specific to each "
+                    f"pixel's climate and soil characteristics. SMI values range from 0 (extremely dry) to 1 "
+                    f"(extremely wet), with lower values indicating drier conditions and increased agricultural "
+                    f"drought risk.<br><br>"
+                    f"<strong>What this statistic shows:</strong> {base_meaning}.<br><br>"
+                    f"<strong>Threshold:</strong> SMI ≤ {selected_thresh:.1f}<br><br>"
+                    f"<strong>Reference period:</strong> 1960–1999. This period serves as the climatological "
+                    f"baseline for normalizing soil moisture values. The SMI is standardized relative to this "
+                    f"reference period, allowing consistent comparison of drought severity across time and space.<br><br>"
+                    f"<strong>Data sources:</strong> CLM5 (Community Land Model version 5) land surface model "
+                    f"(<a href='#lawrence2019' class='citation-link'>Lawrence et al., 2019</a>; "
+                    f"<a href='#poppe2025' class='citation-link'>Poppe Terán et al., 2025</a>) and mHM (mesoscale Hydrological Model) "
+                    f"hydrological model (<a href='#thober2019' class='citation-link'>Thober et al., 2019</a>) simulations at 3km resolution, integrated between "
+                    f"both models. Atmospheric forcing: ERA5 reanalysis "
+                    f"(<a href='#hersbach2020' class='citation-link'>Hersbach et al., 2020</a>), adjustable "
+                    f"through the sidebar. Soil moisture drought analysis follows "
+                    f"(<a href='#samaniego2018' class='citation-link'>Samaniego et al., 2018</a>) "
+                    f"within the EURO-CORDEX domain."
+                )
 
         return ui.HTML(
             f"<div style='text-align: left; color: #fff; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}<style>.citation-link {{ color: var(--bs-success); text-decoration: none; }} .citation-link:hover {{ text-decoration: underline; }}</style></div>"
         )
+
+    def _largest_event_fig():
+        """Figure for the largest drought event: footprint (left) + duration (right).
+
+        Plain helper (not a Renderer) so render_eu3_map can route to it.
+        """
+        from plots import EU3_map
+        
+        decade_year = input.dec().year
+        stat = SMI_STATISTICS["largest_event"]
+        
+        # Check if largest event data is available
+        if not LARGEST_EVENT_DATA or decade_year not in LARGEST_EVENT_DATA:
+            available_years = list(LARGEST_EVENT_DATA.keys()) if LARGEST_EVENT_DATA else []
+            if available_years:
+                return _message_fig(
+                    f"Largest drought event data is not available for {decade_year}. "
+                    f"Available decades: {', '.join(str(y) for y in sorted(available_years))}."
+                )
+            else:
+                return _message_fig("Largest drought event data is not available.")
+        
+        event_data = LARGEST_EVENT_DATA[decade_year]
+        mask = event_data["mask"]
+        duration = event_data["duration"]
+        
+        # Get coordinates
+        if LARGEST_EVENT_lon is None or LARGEST_EVENT_lat is None:
+            return _message_fig("Coordinates for largest drought event data not available.")
+        
+        # Calculate dynamic vmin/vmax for duration
+        valid_duration = duration[~np.isnan(duration)]
+        if len(valid_duration) > 0:
+            data_min = float(np.nanmin(valid_duration))
+            data_max = float(np.nanmax(valid_duration))
+            data_range = data_max - data_min
+            padding = data_range * 0.05 if data_range > 0 else 1.0
+            dynamic_vmin = max(0, data_min - padding)
+            dynamic_vmax = data_max + padding
+        else:
+            dynamic_vmin, dynamic_vmax = 0, 200
+        
+        # Two-panel layout (EU3_map): binary footprint (left) + per-pixel
+        # duration (right), with a single vertical colorbar for the right panel.
+        event_map = EU3_map(
+            title=["Affected area", "Duration (days)"],
+            description="",
+            color_mode="dark",
+            theme_config=theme_config,
+            horizontal_cbar=False,
+            fx=10.0,
+            fy=8.6,
+        )
+        fig, _, _ = event_map.create()
+        
+        # Left panel: binary footprint (single colour, self-explanatory,
+        # so no colorbar for it).
+        mask_clean = np.where(mask == 1, 1.0, np.nan)
+        event_map.pcolormesh(
+            LARGEST_EVENT_lon,
+            LARGEST_EVENT_lat,
+            mask_clean,
+            ax_num=0,
+            cmap=ListedColormap(["#e31a1c"]),
+            vmin=0.0,
+            vmax=1.0,
+            alpha=0.8,
+        )
+        
+        # Right panel: per-pixel duration, with the single vertical colorbar.
+        event_map.pcolormesh(
+            LARGEST_EVENT_lon,
+            LARGEST_EVENT_lat,
+            duration,
+            ax_num=1,
+            cmap=stat["cmap"],
+            vmin=dynamic_vmin,
+            vmax=dynamic_vmax,
+            alpha=0.8,
+        )
+        event_map.colorbar(
+            event_map.pcolormesh_obj2,
+            cbar_label=stat["cbar_label"],
+            extend=stat["extend"],
+        )
+        
+        return fig
 
     @render.plot
     def render_eu3_map():
@@ -1849,9 +2042,14 @@ def server(input, output, session) -> None:
             return _message_fig("Select the Agricultural tab to view SMI data.")
 
         stat_key = input.statistic()
-        stat = SMI_STATISTICS.get(stat_key, SMI_STATISTICS["mean"])
         decade_year = input.dec().year
+        
+        # Route largest_event to its own figure builder
+        if stat_key == "largest_event":
+            return _largest_event_fig()
 
+        stat = SMI_STATISTICS.get(stat_key, SMI_STATISTICS["mean"])
+        
         # Get the SMI threshold - handle case where slider doesn't exist (for 'mean' and 'min' stats)
         # Use the first available threshold as fallback
         selected_thresh = None
@@ -1881,9 +2079,14 @@ def server(input, output, session) -> None:
                 "moisture (SMI)."
             )
 
-        # Fall back to the earliest available decade if this one is missing.
-        if decade_year not in clm5_stat:
-            decade_year = min(clm5_stat.keys())
+        # Show an explicit message for decades without data (e.g. the 2020s,
+        # which SMI does not cover) instead of silently substituting another.
+        available_decades = sorted(set(clm5_stat.keys()) & set(mhm_stat.keys()))
+        if decade_year not in available_decades:
+            return _message_fig(
+                f"SMI data for the {decade_year}–{decade_year + 9} decade is not available. "
+                f"Available decades: {', '.join(str(y) for y in available_decades)}."
+            )
 
         clm5_smi_data = clm5_stat[decade_year] * stat["scale"]
         mhm_smi_data = mhm_stat[decade_year] * stat["scale"]

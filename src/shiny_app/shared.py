@@ -115,6 +115,109 @@ if _clm5_mean_files:
 # Decade start years available for SMI (from the CLM5 mean files).
 smi_decade_years = sorted(_clm5_mean_files.keys())
 
+# ── Decadal largest drought events (CLM5 only) ────────────────────────────────
+# Files: data/decadal_events/SXI_SM_0_92D_<decade>_event.nc
+# Contains: event_mask (binary), event_duration (days), plus metadata in global attributes
+
+decadal_events_dir = data_dir / "decadal_events"
+
+
+def _discover_decadal_event_files() -> dict:
+    """Map decade start year → event file path."""
+    out: dict = {}
+    pattern = decadal_events_dir / "SXI_SM_0_92D_*.nc"
+    for _f in sorted(glob.glob(str(pattern))):
+        _m = re.search(r"SXI_SM_0_92D_(\d{4})_event\.nc$", _f)
+        if _m:
+            out[int(_m.group(1))] = _f
+    return out
+
+
+class _LazyDecadalEvent:
+    """Lazy access to a decadal largest drought event.
+    
+    Maps decade_start_year -> dict with:
+        - 'mask': 2-D array (1=affected pixel, 0=elsewhere, NaN=undefined)
+        - 'duration': 2-D array (days pixel was in event, NaN outside)
+        - 'metadata': dict of global attributes
+    """
+    
+    def __init__(self, files: dict):
+        self._files = dict(files)
+        self._cache: dict = {}
+    
+    def __bool__(self) -> bool:
+        return bool(self._files)
+    
+    def __contains__(self, year: int) -> bool:
+        return year in self._files
+    
+    def keys(self):
+        return self._files.keys()
+    
+    def __getitem__(self, year: int):
+        if year not in self._cache:
+            with nc.Dataset(self._files[year]) as ds:
+                mask = np.ma.filled(ds.variables["event_mask"][0].astype(np.float32), np.nan)
+                duration = np.ma.filled(ds.variables["event_duration"][0].astype(np.float32), np.nan)
+                
+                # Extract global attributes as metadata
+                metadata = {
+                    "title": getattr(ds, "title", ""),
+                    "start_date": getattr(ds, "start_date", ""),
+                    "end_date": getattr(ds, "end_date", ""),
+                    "duration_days": getattr(ds, "duration_days", None),
+                    "integrated_area_km2_days": getattr(ds, "integrated_area_km2_days", None),
+                    "maximum_area_km2": getattr(ds, "maximum_area_km2", None),
+                    "decade": getattr(ds, "decade", None),
+                    "drought_var": getattr(ds, "drought_var", ""),
+                    "t_agg": getattr(ds, "t_agg", ""),
+                    "selection": getattr(ds, "selection", ""),
+                }
+                
+                self._cache[year] = {
+                    "mask": mask,
+                    "duration": duration,
+                    "metadata": metadata,
+                }
+        return self._cache[year]
+
+
+_decadal_event_files = _discover_decadal_event_files()
+LARGEST_EVENT_DATA = _LazyDecadalEvent(_decadal_event_files)
+
+# Event grid coordinates. The current event files carry no lat/lon
+# variables, so the 2-D coordinates come from the CLM5 domain file the
+# data is on (xc = lon, yc = lat). In-file coordinates are preferred if a
+# future regeneration starts to include them.
+LARGEST_EVENT_lat = None
+LARGEST_EVENT_lon = None
+_event_grid_shape = None
+if _decadal_event_files:
+    _first_file = _decadal_event_files[min(_decadal_event_files)]
+    with nc.Dataset(_first_file) as _ds:
+        _event_grid_shape = _ds.variables["event_mask"].shape[1:]
+        if "lat" in _ds.variables and "lon" in _ds.variables:
+            LARGEST_EVENT_lat = _ds.variables["lat"][:].astype(np.float32)
+            LARGEST_EVENT_lon = _ds.variables["lon"][:].astype(np.float32)
+        elif "y" in _ds.variables and "x" in _ds.variables:
+            # Handle potential alternative coordinate naming
+            LARGEST_EVENT_lat = _ds.variables["y"][:].astype(np.float32)
+            LARGEST_EVENT_lon = _ds.variables["x"][:].astype(np.float32)
+
+if LARGEST_EVENT_lat is None and _event_grid_shape is not None:
+    _domain_file = data_dir / "clm5_grid" / "domain.lnd.CLM5EU3_v4.nc"
+    if _domain_file.exists():
+        with nc.Dataset(_domain_file) as _ds:
+            _xc = _ds.variables["xc"][:].astype(np.float32)
+            _yc = _ds.variables["yc"][:].astype(np.float32)
+        if _xc.shape == tuple(_event_grid_shape):
+            LARGEST_EVENT_lat, LARGEST_EVENT_lon = _yc, _xc
+
+# Decade start years available for largest events
+largest_event_decade_years = sorted(_decadal_event_files.keys())
+
+
 # ── SMI Threshold configuration ───────────────────────────────────────────────
 # SMI uses soil moisture thresholds (0.2, 0.3, etc.)
 # Discover available thresholds from files

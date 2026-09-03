@@ -12,6 +12,8 @@ event's start date):
                     in days (timesteps are counted with the 8-d day weight),
                     NaN outside the event
 
+The mask file's lat/lon coordinates are carried into the output files.
+
 Decade assignment: an event belongs to the decade that contains the majority
 of its duration (calendar-day overlap of [start_date, end_date] with the
 decade; exact ties go to the earlier decade). The whole event — including the
@@ -121,7 +123,8 @@ def assign_decade(start: pd.Timestamp, end: pd.Timestamp, decades: list[int]) ->
 def write_decade_file(out_path: Path, member: np.ndarray, n_hit: np.ndarray,
                       valid: np.ndarray, step_days: int, when: pd.Timestamp,
                       ev: pd.Series, mask_file: Path, props_file: Path,
-                      drought_var: str, t_agg: str, project: str) -> None:
+                      drought_var: str, t_agg: str, project: str,
+                      grid_coords: dict) -> None:
     """Write <drought_var>_<t_agg>_<decade>_event.nc for one selected event."""
     mask2d = np.where(valid, member, np.nan).astype("float32")
     dur2d = np.where(valid & member, n_hit * step_days, np.nan).astype("float32")
@@ -141,7 +144,7 @@ def write_decade_file(out_path: Path, member: np.ndarray, n_hit: np.ndarray,
                                                 "was part of the event, in days; NaN "
                                                 "outside the event"}),
         },
-        coords={"time": xr.DataArray([when], dims="time")},
+        coords={"time": xr.DataArray([when], dims="time"), **grid_coords},
         attrs={
             "title": f"Decade {when.year // 10 * 10} largest drought event "
                      f"({drought_var}, {t_agg}, {project})",
@@ -182,6 +185,19 @@ def process(args: argparse.Namespace) -> None:
         raise SystemExit(f"Variable {drought_var} not in {mask_file}; "
                          f"available: {list(ds.data_vars)}")
     lab = ds[drought_var]
+
+    # Keep the mask file's grid coordinates in the output files, relabelled
+    # to the "lat"/"lon" dim names the fields are written with, so each
+    # per-decade file is self-describing.
+    grid_coords: dict = {}
+    for _name, _coord in lab.coords.items():
+        if _name == "time":
+            continue
+        _lname = _name.lower()
+        if "lat" in _lname or _lname.startswith("y"):
+            grid_coords["lat"] = _coord
+        elif "lon" in _lname or _lname.startswith("x"):
+            grid_coords["lon"] = _coord
     if len(axis) != lab.sizes["time"]:
         raise SystemExit(f"Reconstructed time axis has {len(axis)} timesteps "
                          f"({args.start}..{args.end}, {args.step_days}D) but the mask file "
@@ -236,7 +252,7 @@ def process(args: argparse.Namespace) -> None:
         if not args.dry_run:
             write_decade_file(out_path, member, n_hit, valid, args.step_days,
                               ev["start"], ev, mask_file, props_file,
-                              drought_var, t_agg, project)
+                              drought_var, t_agg, project, grid_coords)
     ds.close()
     if not args.dry_run:
         print(f"wrote {len([d for d in decades if d in selected])} file(s) to {odir}")
