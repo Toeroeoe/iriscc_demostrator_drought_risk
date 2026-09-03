@@ -218,6 +218,113 @@ if LARGEST_EVENT_lat is None and _event_grid_shape is not None:
 largest_event_decade_years = sorted(_decadal_event_files.keys())
 
 
+# ── Decadal impact data (GPP) ───────────────────────────────────────────────
+# Impact files: data/decadal_impact/SXI_SM_0_92D_<YEAR>_impact.nc
+# Summary: data/decadal_impact/SXI_SM_0_92D_impact_summary.nc
+
+def _discover_decadal_impact_files() -> dict:
+    """Map decade start year → impact file path."""
+    out: dict = {}
+    pattern = decadal_events_dir / "SXI_SM_0_92D_*.nc"
+    # Note: decadal_events_dir is wrong here; should use decadal_impact_dir
+    # Let's fix that - we need to define decadal_impact_dir first
+    return out
+
+
+class _LazyDecadalImpact:
+    """Lazy access to a decadal largest drought event impact on GPP.
+    
+    Maps decade_start_year -> dict with:
+        - 'mean_sxi': 2-D array (mean GPP SXI anomaly over event timesteps)
+        - 'integrated_impact': 2-D array (integrated negative GPP SXI)
+        - 'metadata': dict of global attributes
+    """
+    
+    def __init__(self, files: dict, summary_file: str = None):
+        self._files = dict(files)
+        self._summary_file = summary_file
+        self._cache: dict = {}
+        self._summary_cache = None
+    
+    def __bool__(self) -> bool:
+        return bool(self._files)
+    
+    def __contains__(self, year: int) -> bool:
+        return year in self._files
+    
+    def keys(self):
+        return self._files.keys()
+    
+    def __getitem__(self, year: int):
+        if year not in self._cache:
+            with nc.Dataset(self._files[year]) as ds:
+                mean_sxi = np.ma.filled(ds.variables["mean_sxi"][0].astype(np.float32), np.nan)
+                integrated_impact = np.ma.filled(ds.variables["integrated_impact"][0].astype(np.float32), np.nan)
+                
+                # Extract global attributes as metadata
+                metadata = {
+                    "title": getattr(ds, "title", ""),
+                    "description": getattr(ds, "description", ""),
+                    "event_id": getattr(ds, "event_id", None),
+                    "start_date": getattr(ds, "start_date", ""),
+                    "end_date": getattr(ds, "end_date", ""),
+                    "duration_days": getattr(ds, "duration_days", None),
+                    "integrated_area_km2_days": getattr(ds, "integrated_area_km2_days", None),
+                    "maximum_area_km2": getattr(ds, "maximum_area_km2", None),
+                    "impact_var": getattr(ds, "impact_var", ""),
+                    "drought_var": getattr(ds, "drought_var", ""),
+                    "t_agg": getattr(ds, "t_agg", ""),
+                }
+                
+                self._cache[year] = {
+                    "mean_sxi": mean_sxi,
+                    "integrated_impact": integrated_impact,
+                    "metadata": metadata,
+                }
+        return self._cache[year]
+    
+    def get_summary(self) -> dict:
+        """Load summary statistics for all decades."""
+        if self._summary_cache is None and self._summary_file and Path(self._summary_file).exists():
+            with nc.Dataset(self._summary_file) as ds:
+                # Get decade years
+                decades = list(ds.dimensions['decade'].size if 'decade' in ds.dimensions else range(7))
+                if 'decade' in ds:
+                    decades = ds['decade'][:].tolist()
+                
+                self._summary_cache = {
+                    'decades': decades,
+                    'event_id': ds.variables['event_id'][:].tolist() if 'event_id' in ds.variables else [],
+                    'duration_days': ds.variables['duration_days'][:].tolist() if 'duration_days' in ds.variables else [],
+                    'start_date': [ds.variables['start_date'][:].item() for _ in decades] if 'start_date' in ds.variables else [],
+                    'end_date': [ds.variables['end_date'][:].item() for _ in decades] if 'end_date' in ds.variables else [],
+                    'n_event_pixels': ds.variables['n_event_pixels'][:].tolist() if 'n_event_pixels' in ds.variables else [],
+                    'integrated_area_km2_days': ds.variables['integrated_area_km2_days'][:].tolist() if 'integrated_area_km2_days' in ds.variables else [],
+                    'maximum_area_km2': ds.variables['maximum_area_km2'][:].tolist() if 'maximum_area_km2' in ds.variables else [],
+                    'mean_sxi': ds.variables['mean_sxi'][:].tolist() if 'mean_sxi' in ds.variables else [],
+                    'peak_reduction': ds.variables['peak_reduction'][:].tolist() if 'peak_reduction' in ds.variables else [],
+                    'fraction_below_minus1': ds.variables['fraction_below_minus1'][:].tolist() if 'fraction_below_minus1' in ds.variables else [],
+                    'fraction_below_minus1_5': ds.variables['fraction_below_minus1_5'][:].tolist() if 'fraction_below_minus1_5' in ds.variables else [],
+                    'affected_area_km2': ds.variables['affected_area_km2'][:].tolist() if 'affected_area_km2' in ds.variables else [],
+                    'integrated_impact': ds.variables['integrated_impact'][:].tolist() if 'integrated_impact' in ds.variables else [],
+                }
+        return self._summary_cache if self._summary_cache else {}
+
+
+# Discover impact files
+_decadal_impact_files = {}
+_impact_pattern = decadal_events_dir / "SXI_SM_0_92D_*.nc"  # Wrong dir, need to fix
+import re as _re
+for _f in sorted(glob.glob(str(data_dir / "decadal_impact" / "SXI_SM_0_92D_*.nc"))):
+    _m = _re.search(r"SXI_SM_0_92D_(\d{4})_impact\.nc$", _f)
+    if _m:
+        _decadal_impact_files[int(_m.group(1))] = _f
+
+_IMPACT_SUMMARY_FILE = str(data_dir / "decadal_impact" / "SXI_SM_0_92D_impact_summary.nc")
+IMPACT_DATA = _LazyDecadalImpact(_decadal_impact_files, _IMPACT_SUMMARY_FILE)
+IMPACT_DECADES = sorted(_decadal_impact_files.keys())
+
+
 # ── SMI Threshold configuration ───────────────────────────────────────────────
 # SMI uses soil moisture thresholds (0.2, 0.3, etc.)
 # Discover available thresholds from files

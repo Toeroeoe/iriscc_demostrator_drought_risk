@@ -37,8 +37,9 @@ from shared import (
     LARGEST_EVENT_lat,
     LARGEST_EVENT_lon,
     LARGEST_EVENT_DATA,
+    IMPACT_DATA,
+    IMPACT_DECADES,
 )
-from shiny import App, render, ui
 from shiny.types import ImgData
 from shinyswatch import theme
 from theme_config import GOOGLE_FONTS_URL, get_theme_config
@@ -377,8 +378,17 @@ page_droughts = ui.div(
             title="Drought occurence",
         ),
         ui.navset_card_pill(
-            ui.nav_panel("Crop yield", ""),
-            ui.nav_panel("Forest carbon uptake"),
+            ui.nav_panel(
+                "Carbon uptake",
+                ui.p(
+                    "Select 'Largest drought event' in the Agricultural tab to view carbon uptake impacts.",
+                    style="text-align:left; color:#888; margin-bottom:6px;",
+                    id="impacts_placeholder_msg",
+                ),
+                ui.output_plot("render_impact_maps", height="600px"),
+                ui.output_ui("impacts_summary_stats"),
+                ui.output_ui("impacts_caption"),
+            ),
             title="Impacts",
         )
     ),  # Close page_sidebar
@@ -2030,6 +2040,117 @@ def server(input, output, session) -> None:
         )
         
         return fig
+
+    def _impact_fig():
+        """Figure for largest drought event impact on Carbon uptake (GPP).
+        
+        Two-panel layout: mean_sxi (left), integrated_impact (right).
+        """
+        from plots import EU3_map
+        
+        decade_year = input.dec().year
+        
+        # Check if impact data is available
+        if not IMPACT_DATA or decade_year not in IMPACT_DATA:
+            available_years = list(IMPACT_DATA.keys()) if IMPACT_DATA else []
+            if available_years:
+                return _message_fig(
+                    f"Carbon uptake impact data is not available for {decade_year}. "
+                    f"Available decades: {', '.join(str(y) for y in sorted(available_years))}."
+                )
+            else:
+                return _message_fig("Carbon uptake impact data is not available.")
+        
+        impact_data = IMPACT_DATA[decade_year]
+        mean_sxi = impact_data["mean_sxi"]
+        integrated_impact = impact_data["integrated_impact"]
+        
+        # Get coordinates (same as largest event - same grid)
+        if LARGEST_EVENT_lon is None or LARGEST_EVENT_lat is None:
+            return _message_fig("Coordinates for impact data not available.")
+        
+        # Create two-panel figure
+        impact_map = EU3_map(
+            title=["Mean GPP SXI", "Integrated impact"],
+            description="",
+            color_mode="dark",
+            theme_config=theme_config,
+            horizontal_cbar=False,
+            fx=12.0,
+            fy=8.6,
+        )
+        fig, _, _ = impact_map.create()
+        
+        # Left panel: mean_sxi (standardized GPP anomaly)
+        valid_sxi = mean_sxi[~np.isnan(mean_sxi)]
+        if len(valid_sxi) > 0:
+            sxi_min = float(np.nanmin(valid_sxi))
+            sxi_max = float(np.nanmax(valid_sxi))
+            sxi_range = sxi_max - sxi_min
+            sxi_padding = sxi_range * 0.05 if sxi_range > 0 else 1.0
+            sxi_vmin = sxi_min - sxi_padding
+            sxi_vmax = sxi_max + sxi_padding
+        else:
+            sxi_vmin, sxi_vmax = -4, 3
+        
+        impact_map.pcolormesh(
+            LARGEST_EVENT_lon,
+            LARGEST_EVENT_lat,
+            mean_sxi,
+            ax_num=0,
+            cmap="RdBu",
+            vmin=sxi_vmin,
+            vmax=sxi_vmax,
+            alpha=0.8,
+        )
+        impact_map.colorbar(
+            impact_map.pcolormesh_obj,
+            cbar_label="Mean GPP SXI (dimensionless)",
+            extend="both",
+        )
+        
+        # Right panel: integrated_impact (only negative values matter)
+        valid_impact = integrated_impact[~np.isnan(integrated_impact)]
+        if len(valid_impact) > 0:
+            impact_min = float(np.nanmin(valid_impact))
+            impact_max = float(np.nanmax(valid_impact))  # Should be 0 or close
+            impact_range = impact_max - impact_min
+            impact_padding = impact_range * 0.05 if impact_range > 0 else 100.0
+            impact_vmin = impact_min - impact_padding
+            impact_vmax = max(0, impact_max + impact_padding)
+        else:
+            impact_vmin, impact_vmax = -800, 0
+        
+        impact_map.pcolormesh(
+            LARGEST_EVENT_lon,
+            LARGEST_EVENT_lat,
+            integrated_impact,
+            ax_num=1,
+            cmap="Blues",
+            vmin=impact_vmin,
+            vmax=impact_vmax,
+            alpha=0.8,
+        )
+        impact_map.colorbar(
+            impact_map.pcolormesh_obj2,
+            cbar_label="Integrated impact (anomaly\u00b7days)",
+            extend="min",
+        )
+        
+        return fig
+
+    @render.plot
+    def render_impact_maps():
+        """Render impact maps for Carbon uptake (GPP)."""
+        # Only show when largest_event is selected
+        stat_key = input.statistic()
+        
+        if stat_key != "largest_event":
+            return _message_fig(
+                "Select 'Largest drought event' in the Agricultural tab to view carbon uptake impacts."
+            )
+        
+        return _impact_fig()
 
     @render.plot
     def render_eu3_map():
