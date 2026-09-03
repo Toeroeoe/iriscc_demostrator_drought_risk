@@ -1,0 +1,12 @@
+
+drought_var: SXI_SM_0
+impact_var: GPP
+t_agg: 92D
+project: DETECT
+
+masks:
+  dir: "/p/scratch/cjibg31/jibg3105/data/HOLIDROUGHT/"
+  suffix: "3d"
+
+props:
+  dir: "/p/scratch/cjibg31/jibg3105/projects/HOLIDROUGHT/events/properties/out"
