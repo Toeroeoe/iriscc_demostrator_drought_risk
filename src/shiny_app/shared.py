@@ -222,15 +222,6 @@ largest_event_decade_years = sorted(_decadal_event_files.keys())
 # Impact files: data/decadal_impact/SXI_SM_0_92D_<YEAR>_impact.nc
 # Summary: data/decadal_impact/SXI_SM_0_92D_impact_summary.nc
 
-def _discover_decadal_impact_files() -> dict:
-    """Map decade start year → impact file path."""
-    out: dict = {}
-    pattern = decadal_events_dir / "SXI_SM_0_92D_*.nc"
-    # Note: decadal_events_dir is wrong here; should use decadal_impact_dir
-    # Let's fix that - we need to define decadal_impact_dir first
-    return out
-
-
 class _LazyDecadalImpact:
     """Lazy access to a decadal largest drought event impact on GPP.
     
@@ -287,17 +278,16 @@ class _LazyDecadalImpact:
         """Load summary statistics for all decades."""
         if self._summary_cache is None and self._summary_file and Path(self._summary_file).exists():
             with nc.Dataset(self._summary_file) as ds:
-                # Get decade years
-                decades = list(ds.dimensions['decade'].size if 'decade' in ds.dimensions else range(7))
-                if 'decade' in ds:
-                    decades = ds['decade'][:].tolist()
+                # Get decade years from the decade dimension
+                if 'decade' in ds.dimensions:
+                    decades = ds.variables['decade'][:].tolist() if 'decade' in ds.variables else list(range(ds.dimensions['decade'].size))
+                else:
+                    decades = list(range(7))
                 
                 self._summary_cache = {
                     'decades': decades,
                     'event_id': ds.variables['event_id'][:].tolist() if 'event_id' in ds.variables else [],
                     'duration_days': ds.variables['duration_days'][:].tolist() if 'duration_days' in ds.variables else [],
-                    'start_date': [ds.variables['start_date'][:].item() for _ in decades] if 'start_date' in ds.variables else [],
-                    'end_date': [ds.variables['end_date'][:].item() for _ in decades] if 'end_date' in ds.variables else [],
                     'n_event_pixels': ds.variables['n_event_pixels'][:].tolist() if 'n_event_pixels' in ds.variables else [],
                     'integrated_area_km2_days': ds.variables['integrated_area_km2_days'][:].tolist() if 'integrated_area_km2_days' in ds.variables else [],
                     'maximum_area_km2': ds.variables['maximum_area_km2'][:].tolist() if 'maximum_area_km2' in ds.variables else [],
@@ -313,7 +303,6 @@ class _LazyDecadalImpact:
 
 # Discover impact files
 _decadal_impact_files = {}
-_impact_pattern = decadal_events_dir / "SXI_SM_0_92D_*.nc"  # Wrong dir, need to fix
 import re as _re
 for _f in sorted(glob.glob(str(data_dir / "decadal_impact" / "SXI_SM_0_92D_*.nc"))):
     _m = _re.search(r"SXI_SM_0_92D_(\d{4})_impact\.nc$", _f)

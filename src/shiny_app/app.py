@@ -38,8 +38,8 @@ from shared import (
     LARGEST_EVENT_lon,
     LARGEST_EVENT_DATA,
     IMPACT_DATA,
-    IMPACT_DECADES,
 )
+from shiny import App, render, ui
 from shiny.types import ImgData
 from shinyswatch import theme
 from theme_config import GOOGLE_FONTS_URL, get_theme_config
@@ -385,7 +385,7 @@ page_droughts = ui.div(
                     style="text-align:left; color:#888; margin-bottom:6px;",
                     id="impacts_placeholder_msg",
                 ),
-                ui.output_plot("render_impact_maps", height="600px"),
+                ui.output_plot("render_impact_maps", height="750px"),
                 ui.output_ui("impacts_summary_stats"),
                 ui.output_ui("impacts_caption"),
             ),
@@ -2044,7 +2044,11 @@ def server(input, output, session) -> None:
     def _impact_fig():
         """Figure for largest drought event impact on Carbon uptake (GPP).
         
-        Two-panel layout: mean_sxi (left), integrated_impact (right).
+        Two-panel layout with separate horizontal colorbars below each map.
+        Uses the EU3_map class so projection, basemap, gridlines and extent
+        match the other maps exactly. The class' own colorbar() would span
+        the whole bottom row, so the two colorbar axes are added manually
+        from the class' GridSpec (GridSpec-based axes are Shiny-safe).
         """
         from plots import EU3_map
         
@@ -2069,27 +2073,25 @@ def server(input, output, session) -> None:
         if LARGEST_EVENT_lon is None or LARGEST_EVENT_lat is None:
             return _message_fig("Coordinates for impact data not available.")
         
-        # Create two-panel figure
+        # EU3_map with horizontal_cbar=True builds the 2-row GridSpec
+        # (maps on top, thin colorbar row below) and the RotatedPole
+        # GeoAxes with the app's standard basemap, gridlines and extent.
         impact_map = EU3_map(
             title=["Mean GPP SXI", "Integrated impact"],
             description="",
             color_mode="dark",
             theme_config=theme_config,
-            horizontal_cbar=False,
-            fx=12.0,
-            fy=8.6,
+            horizontal_cbar=True,
         )
-        fig, _, _ = impact_map.create()
+        fig, gs, _ = impact_map.create()
         
-        # Left panel: mean_sxi (standardized GPP anomaly)
+        # Left panel: mean_sxi with RdBu colormap
         valid_sxi = mean_sxi[~np.isnan(mean_sxi)]
         if len(valid_sxi) > 0:
             sxi_min = float(np.nanmin(valid_sxi))
             sxi_max = float(np.nanmax(valid_sxi))
-            sxi_range = sxi_max - sxi_min
-            sxi_padding = sxi_range * 0.05 if sxi_range > 0 else 1.0
-            sxi_vmin = sxi_min - sxi_padding
-            sxi_vmax = sxi_max + sxi_padding
+            sxi_vmax = max(abs(sxi_min), abs(sxi_max))
+            sxi_vmin = -sxi_vmax
         else:
             sxi_vmin, sxi_vmax = -4, 3
         
@@ -2098,26 +2100,18 @@ def server(input, output, session) -> None:
             LARGEST_EVENT_lat,
             mean_sxi,
             ax_num=0,
-            cmap="RdBu",
+            cmap='RdBu',
             vmin=sxi_vmin,
             vmax=sxi_vmax,
             alpha=0.8,
         )
-        impact_map.colorbar(
-            impact_map.pcolormesh_obj,
-            cbar_label="Mean GPP SXI (dimensionless)",
-            extend="both",
-        )
         
-        # Right panel: integrated_impact (only negative values matter)
+        # Right panel: integrated_impact with YlOrRd colormap
         valid_impact = integrated_impact[~np.isnan(integrated_impact)]
         if len(valid_impact) > 0:
             impact_min = float(np.nanmin(valid_impact))
-            impact_max = float(np.nanmax(valid_impact))  # Should be 0 or close
-            impact_range = impact_max - impact_min
-            impact_padding = impact_range * 0.05 if impact_range > 0 else 100.0
-            impact_vmin = impact_min - impact_padding
-            impact_vmax = max(0, impact_max + impact_padding)
+            impact_vmax = 0
+            impact_vmin = impact_min * 1.05 if impact_min < 0 else -100
         else:
             impact_vmin, impact_vmax = -800, 0
         
@@ -2126,16 +2120,39 @@ def server(input, output, session) -> None:
             LARGEST_EVENT_lat,
             integrated_impact,
             ax_num=1,
-            cmap="Blues",
+            cmap='YlOrRd',
             vmin=impact_vmin,
             vmax=impact_vmax,
             alpha=0.8,
         )
-        impact_map.colorbar(
-            impact_map.pcolormesh_obj2,
-            cbar_label="Integrated impact (anomaly\u00b7days)",
-            extend="min",
-        )
+        
+        # Two separate horizontal colorbars, one below each map. EU3_map's
+        # colorbar() spans the entire bottom row, so add both here instead,
+        # styled the same way as the class' horizontal colorbar.
+        mono = theme_config.get_font_family("mono")
+        text_color = theme_config.colors["text"]
+        for cax_idx, pcm, cbar_label, extend in (
+            (0, impact_map.pcolormesh_obj, "Mean GPP SXI", "both"),
+            (1, impact_map.pcolormesh_obj2, "Integrated impact", "min"),
+        ):
+            cbar_ax = fig.add_subplot(gs[1, cax_idx])
+            # Fit the colorbar to the TOP of its cell (closest to the map)
+            pos = cbar_ax.get_position()
+            new_height = pos.height * 0.85
+            cbar_ax.set_position((pos.x0, pos.y1 - new_height, pos.width, new_height))
+            cbar = fig.colorbar(pcm, cax=cbar_ax, orientation="horizontal", extend=extend)
+            cbar.set_label(
+                cbar_label,
+                fontfamily=mono,
+                fontsize=impact_map.fs_map_label,
+                color=text_color,
+                labelpad=10,
+                rotation=0,
+            )
+            cbar.ax.tick_params(labelsize=impact_map.fs_map_label - 2, colors=text_color, pad=5)
+            for label in cbar.ax.get_xticklabels():
+                label.set_fontfamily(mono)
+                label.set_color(text_color)
         
         return fig
 
@@ -2151,6 +2168,193 @@ def server(input, output, session) -> None:
             )
         
         return _impact_fig()
+
+    @render.ui
+    def impacts_summary_stats():
+        """Display summary statistics for carbon uptake impacts."""
+        stat_key = input.statistic()
+        if stat_key != "largest_event":
+            return None
+        
+        decade_year = input.dec().year
+        
+        if not IMPACT_DATA or decade_year not in IMPACT_DATA:
+            return ui.HTML(
+                f"<div style='text-align: left; color: #fff; font-size: 14px; padding: 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-radius: 6px;'>Carbon uptake impact data not available for {decade_year}.</div>"
+            )
+        
+        summary = IMPACT_DATA.get_summary()
+        if not summary or 'decades' not in summary:
+            return ui.HTML(
+                "<div style='text-align: left; color: #fff; font-size: 14px; padding: 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-radius: 6px;'>Summary data not available.</div>"
+            )
+        
+        try:
+            idx = summary['decades'].index(decade_year)
+        except ValueError:
+            return ui.HTML(
+                f"<div style='text-align: left; color: #fff; font-size: 14px; padding: 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-radius: 6px;'>Data not available for decade {decade_year}.</div>"
+            )
+        
+        def get_val(key):
+            if key in summary and idx < len(summary[key]):
+                return summary[key][idx]
+            return None
+        
+        mean_sxi = get_val('mean_sxi')
+        peak_reduction = get_val('peak_reduction')
+        frac_below_1 = get_val('fraction_below_minus1')
+        frac_below_1_5 = get_val('fraction_below_minus1_5')
+        affected_area = get_val('affected_area_km2')
+        integrated_impact = get_val('integrated_impact')
+        duration_days = get_val('duration_days')
+        max_area = get_val('maximum_area_km2')
+        
+        def fmt(val, decimals=2, as_int=False, add_commas=False):
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                return "N/A"
+            if as_int:
+                return f"{int(val):,}" if add_commas else str(int(val))
+            return f"{val:.{decimals}f}"
+        
+        html = f'''
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 10px;">
+            <div style="background: rgba(91, 192, 222, 0.15); border: 1px solid #5bc0de; border-radius: 6px; padding: 12px;">
+                <div style="font-size: 12px; color: #5bc0de; margin-bottom: 4px;">MEAN GPP SXI</div>
+                <div style="font-size: 18px; font-weight: bold; color: #fff;">{fmt(mean_sxi)}</div>
+            </div>
+            <div style="background: rgba(217, 83, 79, 0.15); border: 1px solid #d9534f; border-radius: 6px; padding: 12px;">
+                <div style="font-size: 12px; color: #d9534f; margin-bottom: 4px;">PEAK REDUCTION</div>
+                <div style="font-size: 18px; font-weight: bold; color: #fff;">{fmt(peak_reduction)}</div>
+            </div>
+            <div style="background: rgba(240, 173, 78, 0.15); border: 1px solid #f0ad4e; border-radius: 6px; padding: 12px;">
+                <div style="font-size: 12px; color: #f0ad4e; margin-bottom: 4px;">DURATION</div>
+                <div style="font-size: 18px; font-weight: bold; color: #fff;">{fmt(duration_days, as_int=True, add_commas=True)}</div>
+            </div>
+            <div style="background: rgba(102, 166, 156, 0.15); border: 1px solid #66a69c; border-radius: 6px; padding: 12px;">
+                <div style="font-size: 12px; color: #66a69c; margin-bottom: 4px;">FRACTION < SXI -1</div>
+                <div style="font-size: 18px; font-weight: bold; color: #fff;">{fmt(frac_below_1 * 100, decimals=1) + '%' if frac_below_1 is not None else 'N/A'}</div>
+            </div>
+            <div style="background: rgba(102, 166, 156, 0.15); border: 1px solid #66a69c; border-radius: 6px; padding: 12px;">
+                <div style="font-size: 12px; color: #66a69c; margin-bottom: 4px;">FRACTION < SXI -1.5</div>
+                <div style="font-size: 18px; font-weight: bold; color: #fff;">{fmt(frac_below_1_5 * 100, decimals=1) + '%' if frac_below_1_5 is not None else 'N/A'}</div>
+            </div>
+            <div style="background: rgba(129, 174, 129, 0.15); border: 1px solid #81ae81; border-radius: 6px; padding: 12px;">
+                <div style="font-size: 12px; color: #81ae81; margin-bottom: 4px;">AFFECTED AREA</div>
+                <div style="font-size: 18px; font-weight: bold; color: #fff;">{fmt(affected_area, as_int=True, add_commas=True)}</div>
+            </div>
+            <div style="background: rgba(158, 149, 182, 0.15); border: 1px solid #9e95b6; border-radius: 6px; padding: 12px;">
+                <div style="font-size: 12px; color: #9e95b6; margin-bottom: 4px;">MAXIMUM AREA</div>
+                <div style="font-size: 18px; font-weight: bold; color: #fff;">{fmt(max_area, as_int=True, add_commas=True)}</div>
+            </div>
+            <div style="background: rgba(189, 156, 189, 0.15); border: 1px solid #bd9cbd; border-radius: 6px; padding: 12px;">
+                <div style="font-size: 12px; color: #bd9cbd; margin-bottom: 4px;">INTEGRATED IMPACT</div>
+                <div style="font-size: 18px; font-weight: bold; color: #fff;">{fmt(integrated_impact, as_int=True, add_commas=True)}</div>
+            </div>
+        </div>
+        <div style="font-size: 11px; color: #888; text-align: center;">
+            All metrics for the largest drought event of decade {decade_year}–{decade_year+9}. 
+            Affected area: km²; Integrated impact: anomaly·km²·days.
+        </div>
+        '''
+        
+        return ui.HTML(html)
+
+    @render.ui
+    def impacts_caption():
+        """Caption for carbon uptake impacts."""
+        stat_key = input.statistic()
+        if stat_key != "largest_event":
+            return None
+        
+        decade_year = input.dec().year
+        
+        if not IMPACT_DATA or decade_year not in IMPACT_DATA:
+            available_years = list(IMPACT_DATA.keys()) if IMPACT_DATA else []
+            if available_years:
+                text = (
+                    f"Carbon uptake impact data is not available for {decade_year}. "
+                    f"Available decades: {', '.join(str(y) for y in sorted(available_years))}."
+                )
+            else:
+                text = "Carbon uptake impact data is not available."
+            return ui.HTML(
+                f"<div style='text-align: left; color: #fff; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}<style>.citation-link {{ color: var(--bs-success); text-decoration: none; }} .citation-link:hover {{ text-decoration: underline; }}</style></div>"
+            )
+        
+        impact_data = IMPACT_DATA[decade_year]
+        metadata = impact_data["metadata"]
+        summary = IMPACT_DATA.get_summary()
+        
+        start_date = metadata.get("start_date", "Unknown")
+        end_date = metadata.get("end_date", "Unknown")
+        duration_days = metadata.get("duration_days", "Unknown")
+        max_area = metadata.get("maximum_area_km2", "Unknown")
+        integrated_area = metadata.get("integrated_area_km2_days", "Unknown")
+        
+        if isinstance(duration_days, (int, float)) and not np.isnan(duration_days):
+            duration_days = f"{int(duration_days):,}"
+        if isinstance(max_area, (int, float)) and not np.isnan(max_area):
+            max_area = f"{int(max_area):,} km²"
+        if isinstance(integrated_area, (int, float)) and not np.isnan(integrated_area):
+            integrated_area = f"{int(integrated_area):,} km²·days"
+        
+        frac_below_1 = "N/A"
+        frac_below_1_5 = "N/A"
+        mean_sxi_val = "N/A"
+        peak_red = "N/A"
+        integrated_impact_val = "N/A"
+        affected_area_val = "N/A"
+        
+        if summary and 'decades' in summary:
+            try:
+                idx = summary['decades'].index(decade_year)
+                if 'fraction_below_minus1' in summary and idx < len(summary['fraction_below_minus1']):
+                    frac_below_1 = f"{summary['fraction_below_minus1'][idx]*100:.1f}%"
+                if 'fraction_below_minus1_5' in summary and idx < len(summary['fraction_below_minus1_5']):
+                    frac_below_1_5 = f"{summary['fraction_below_minus1_5'][idx]*100:.1f}%"
+                if 'mean_sxi' in summary and idx < len(summary['mean_sxi']):
+                    mean_sxi_val = f"{summary['mean_sxi'][idx]:.2f}"
+                if 'peak_reduction' in summary and idx < len(summary['peak_reduction']):
+                    peak_red = f"{summary['peak_reduction'][idx]:.2f}"
+                if 'integrated_impact' in summary and idx < len(summary['integrated_impact']):
+                    integrated_impact_val = f"{int(summary['integrated_impact'][idx]):,}"
+                if 'affected_area_km2' in summary and idx < len(summary['affected_area_km2']):
+                    affected_area_val = f"{int(summary['affected_area_km2'][idx]):,} km²"
+            except (ValueError, IndexError):
+                pass
+        
+        text = (
+            f"<strong>CARBON UPTAKE IMPACTS</strong> of the largest drought event (decade {decade_year}–{decade_year + 9}).<br><br>"
+            f"<strong>Event description:</strong> This shows the impacts on Gross Primary Productivity (GPP) - "
+            f"the carbon uptake by terrestrial ecosystems - during the largest drought event of the decade. "
+            f"The event was identified based on soil moisture drought (SXI_SM_0) and its impacts on vegetation "
+            f"productivity are shown here.<br><br>"
+            f"<strong>Event timing:</strong> {start_date} to {end_date} ({duration_days} days total duration)<br><br>"
+            f"<strong>Spatial extent:</strong> Maximum area affected: {max_area}<br>"
+            f"<strong>Integrated drought extent:</strong> {integrated_area}<br><br>"
+            f"<strong>Left panel (Mean GPP SXI):</strong> The average standardized anomaly of GPP during the event. "
+            f"Negative values (blue) indicate reduced carbon uptake compared to normal conditions. "
+            f"Values around mean_sxi = {mean_sxi_val} show the overall impact magnitude.<br><br>"
+            f"<strong>Right panel (Integrated impact):</strong> Cumulative impact combining both the intensity "
+            f"and duration of GPP reduction at each location. More negative values (darker red) indicate "
+            f"greater total impact. Total integrated impact: {integrated_impact_val}<br><br>"
+            f"<strong>Impact severity:</strong><br>"
+            f"- Fraction of area with GPP SXI < -1 (moderate impact): {frac_below_1}<br>"
+            f"- Fraction of area with GPP SXI < -1.5 (severe impact): {frac_below_1_5}<br>"
+            f"- Maximum affected area (GPP SXI < 0): {affected_area_val}<br><br>"
+            f"<strong>Data note:</strong> These impacts represent the co-occurrence of drought conditions and "
+            f"GPP anomalies, not necessarily a causal relationship.<br><br>"
+            f"<strong>Drought index:</strong> Event identified using SXI_SM_0 (soil moisture index, 92-day aggregation). "
+            f"Impact variable: SXI_GPP (standardized GPP anomaly).<br><br>"
+            f"<strong>Data source:</strong> CLM5 simulations at 3km resolution "
+            f"(<a href='#lawrence2019' class='citation-link'>Lawrence et al., 2019</a>; "
+            f"<a href='#poppe2025' class='citation-link'>Poppe Terán et al., 2025</a>), within the EURO-CORDEX domain."
+        )
+        
+        return ui.HTML(
+            f"<div style='text-align: left; color: #fff; font-size: 14px; line-height: 1.6; padding: 5px 10px 10px 10px; background-color: rgba(240, 173, 78, 0.12); border: 1px solid #f0ad4e; border-left: 4px solid #f0ad4e; border-radius: 6px;'>{text}<style>.citation-link {{ color: var(--bs-success); text-decoration: none; }} .citation-link:hover {{ text-decoration: underline; }}</style></div>"
+        )
 
     @render.plot
     def render_eu3_map():
