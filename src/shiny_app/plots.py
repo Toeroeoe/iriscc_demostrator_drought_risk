@@ -666,7 +666,7 @@ class EU3_map(demo_fig):
 
             # Show only labeled (white) tick labels - hide all others
             self.cbar.ax.tick_params(
-                labelsize=self.fs_map_label - 2, colors=self.theme_config.colors["text"], pad=5  # Reduced pad to bring labels closer
+                labelsize=self.fs_map_label, colors=self.theme_config.colors["text"], pad=5  # Reduced pad to bring labels closer
             )
 
             for label in self.cbar.ax.get_xticklabels():
