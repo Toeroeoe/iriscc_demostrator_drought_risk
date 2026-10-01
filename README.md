@@ -19,13 +19,6 @@ pip install -r requirements.txt
 python -m shiny run app.py
 ```
 
-- Or using the provided Makefile:
-
-```bash
-make install
-make run
-```
-
 Docker (build and run):
 
 ```bash
@@ -41,7 +34,6 @@ Then, open your browser and navigate to `http://localhost:8000` to access the ap
 - `app/` - the Shiny application package
 - `requirements.txt` - Python dependencies
 - `Dockerfile` - image for containerized runs
-- `Makefile` - helper tasks
 - `README.md` - this file
 
 ## Next steps

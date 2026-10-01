@@ -1,0 +1,35 @@
+# ---- Docker build context exclusions -------------------------------------
+# NOTE: Docker's .dockerignore does NOT match nested paths with a bare name.
+# A line like ".venv" only matches a top-level ".venv". Use "**/" to match
+# at any depth. This file relies on that.
+
+# VCS + CI + tooling (never needed inside the image)
+.git
+.github
+.gitignore
+.dockerignore
+.coverage
+.pytest_cache
+sonar-project.properties
+pytest.ini
+
+# Python bytecode and virtualenvs at ANY depth
+**/__pycache__
+**/*.py[cod]
+**/.venv
+**/venv
+**/env
+.venv
+venv
+
+# The author's local R/editor scratch files (contain saved session state)
+**/.Rhistory
+**/.RData
+**/.BAK
+
+# Tests are not needed at runtime; keeps context + image smaller
+tests
+evaluation/tests
+
+# Docs
+*.md
