@@ -29,7 +29,36 @@ venv
 
 # Tests are not needed at runtime; keeps context + image smaller
 tests
-evaluation/tests
+
+# Exclude the dist/ directory (build output)
+dist
+
+# evaluation/ is mostly dev tooling: ETL scripts, tests, a nested .venv and
+# per-network station CSVs. The running app reads exactly THREE files from it
+# (shared.py: eval_dir = app_dir.parent.parent / "evaluation"):
+#   clm5_cells.csv, gpp_sm_timeseries.csv, clm5_timeseries.csv
+# Excluding evaluation/* drops the rest (~130 MB incl. the nested venv);
+# the ! lines re-include just the three the "Model evaluation" tab loads.
+evaluation/*
+!evaluation/clm5_cells.csv
+!evaluation/gpp_sm_timeseries.csv
+!evaluation/clm5_timeseries.csv
+
+# data/ is NOT baked: it is fetched by fetch_data.sh on the host and mounted
+# into the container at run time (docker run -v "$PWD/data:/code/data:ro").
+# Keeping it out of the build context is what makes the image small and the
+# mount meaningful. fonts/ and images/ stay in (they are small app assets).
+data
+
+# Staging dirs used by build_drought_app_full.sh. The live one lives OUTSIDE
+# the repo (../.iriscc-stage-full); these **/ rules are insurance so a stray
+# copy can never enter ANY build context (nested paths need the **/ prefix).
+**/.stage-full
+**/.iriscc-stage-full
+
+# docker save artifacts (hundreds of MB to GB each — never belong in a context)
+**/*.tar
+**/*.tar.gz
 
 # Docs
 *.md

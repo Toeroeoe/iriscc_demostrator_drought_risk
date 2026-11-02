@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
 set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+DATA_DIR="$PWD/data"
+
 echo "=== image present ==="
 docker images iriscc-drought-risk
 
-echo "=== starting container ==="
+if [ ! -d "$DATA_DIR" ] || [ -z "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
+  echo "ERROR: no data in $DATA_DIR — run ./fetch_data.sh first." >&2
+  exit 1
+fi
+
+echo "=== starting container (mounting $DATA_DIR -> /code/data, read-only) ==="
 docker rm -f drought-risk 2>/dev/null
-docker run -d --name drought-risk -p 8080:8080 iriscc-drought-risk:1.0
+docker run -d --name drought-risk -p 8080:8080 \
+  -v "$DATA_DIR:/code/data:ro" \
+  iriscc-drought-risk:1.0
 
 echo "=== waiting for startup ==="
 for i in $(seq 1 45); do
